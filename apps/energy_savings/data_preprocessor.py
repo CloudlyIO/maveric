@@ -3,7 +3,7 @@
 import glob
 import logging
 import os
-from typing import List
+from typing import List, Optional
 
 import pandas as pd
 
@@ -73,3 +73,64 @@ class UEDataPreprocessor:
                 f"""Finished preprocessing for Day_{day_num}.
                 Processed {processed_count}/{len(ue_csv_files)} files into '{output_dir}'."""
             )
+
+
+def preprocess_es_data(
+    days: List[int] = [0, 1, 2, 3],
+    base_data_dir: Optional[str] = None
+) -> None:
+    """
+    Preprocess raw UE data for Energy Saving RL training.
+
+    Converts raw UE data from ue_data_per_tick/ directories to ue_data_gym_ready/ format
+    by renaming 'lon' to 'loc_x' and 'lat' to 'loc_y' columns.
+
+    Required Files:
+        - generated_data/Day_*/ue_data_per_tick/generated_ue_data_for_cco_*.csv: Raw UE data files
+
+    Args:
+        days: List of day numbers to preprocess (default: [0, 1, 2, 3])
+        base_data_dir: Base directory containing UE data (default: ./generated_data)
+
+    Raises:
+        FileNotFoundError: If base data directory is not found
+        Exception: If preprocessing fails
+    """
+    # Set default path if not provided
+    if base_data_dir is None:
+        base_data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated_data")
+
+    # Validate base data directory exists
+    if not os.path.exists(base_data_dir):
+        raise FileNotFoundError(f"Base data directory not found: {base_data_dir}")
+
+    logger.info(f"--- Starting Data Preprocessing for Days: {days} ---")
+    logger.info(f"Base data directory: {base_data_dir}")
+
+    try:
+        preprocessor = UEDataPreprocessor(base_data_dir=base_data_dir)
+        preprocessor.run(days=days)
+        logger.info("--- Data Preprocessing Completed Successfully ---")
+
+    except Exception as e:
+        logger.error(f"Data preprocessing failed: {e}")
+        raise
+
+
+if __name__ == "__main__":
+    """
+    Test the preprocess_es_data function.
+    """
+    logger.info("=== Testing Data Preprocessing Function ===")
+
+    try:
+        # Test preprocessing function
+        logger.info("Testing preprocess_es_data function...")
+        preprocess_es_data(days=[0, 1, 2, 3])
+        logger.info("Preprocessing completed successfully.")
+
+        logger.info("=== Data preprocessing test completed successfully ===")
+
+    except Exception as e:
+        logger.error(f"Preprocessing test failed with error: {e}")
+        exit(1)
