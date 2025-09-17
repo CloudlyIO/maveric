@@ -1,0 +1,29 @@
+{
+  "ue_tracks_generation": {
+    "params": {
+      "gauss_markov_params": {
+        "rng_seed": 42,
+        "lon_x_dims": 100,
+        "lon_y_dims": 100,
+        "alpha": 0.5,
+        "variance": 0.8
+      },
+      "num_ticks": 4,
+      "num_batches": 5,
+      "lat_lon_boundaries": {
+        "min_lat": 40.7,
+        "max_lat": 40.8,
+        "min_lon": -74.05,
+        "max_lon": -73.95
+      },
+      "simulation_time_interval_seconds": 1.0,
+      "ue_class_distribution": {
+        "stationary": {"count": 50, "velocity": 0.0, "velocity_variance": 0.1},
+        "pedestrian": {"count": 100, "velocity": 1.2, "velocity_variance": 0.4},
+        "cyclist": {"count": 30, "velocity": 4.0, "velocity_variance": 1.0},
+        "car": {"count": 20, "velocity": 12.0, "velocity_variance": 2.0}
+      }
+    }
+  }
+}
+

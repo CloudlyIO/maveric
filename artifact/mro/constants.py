@@ -1,0 +1,33 @@
+# Copied from maveric/artifact/mro/constants.py
+
+MOCK_UE_ID = "mock_ue_id"
+LONGITUDE = "lon"
+LATITUDE = "lat"
+TICK = "tick"
+
+UE_TRACKS_GENERATION = "ue_tracks_generation"
+PARAMS = "params"
+GAUSS_MARKOV_PARAMS = "gauss_markov_params"
+RNG_SEED = "rng_seed"
+LON_X_DIMS = "lon_x_dims"
+LON_Y_DIMS = "lon_y_dims"
+NUM_TICKS = "num_ticks"
+NUM_BATCHES = "num_batches"
+LON_LAT_BOUNDARIES = "lat_lon_boundaries"
+MIN_LAT = "min_lat"
+MAX_LAT = "max_lat"
+MIN_LON = "min_lon"
+MAX_LON = "max_lon"
+SIMULATION_TIME_INTERVAL = "simulation_time_interval_seconds"
+UE_CLASS_DISTRIBUTION = "ue_class_distribution"
+ALPHA = "alpha"
+VARIANCE = "variance"
+
+STATIONARY = "stationary"
+PEDESTRIAN = "pedestrian"
+CYCLIST = "cyclist"
+CAR = "car"
+COUNT = "count"
+VELOCITY = "velocity"
+VELOCITY_VARIANCE = "velocity_variance"
+
