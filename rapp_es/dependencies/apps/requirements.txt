@@ -1,0 +1,11 @@
+# Requirements for apps/ dependencies
+# Coverage Capacity Optimization (CCO) engine dependencies
+
+# Core numerical libraries
+numpy==1.24.2
+pandas==1.5.3
+
+# Note: apps/coverage_capacity_optimization/cco_engine.py depends on:
+# - numpy (for numerical operations)
+# - pandas (for data manipulation)
+# - Internal radp.digital_twin.utils modules (included locally)

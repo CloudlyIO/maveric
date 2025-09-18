@@ -1,0 +1,14 @@
+# Combined requirements for all rapp_es dependencies
+# This file includes requirements from apps/ and radp/ modules
+
+# Include apps/ dependencies (CCO engine)
+-r apps/requirements.txt
+
+# Include radp/ dependencies (Digital Twin utilities)
+-r radp/requirements.txt
+
+# Note: Some libraries (numpy, pandas) appear in both files but pip handles duplicates
+# All version numbers are taken from:
+# - /maveric/apps/requirements.txt
+# - /maveric/radp/digital_twin/requirements.txt
+# - /maveric/requirements-dev.txt (where available)

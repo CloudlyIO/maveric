@@ -1,0 +1,26 @@
+# Requirements for radp/ dependencies
+# RADP Digital Twin utilities and Bayesian engine dependencies
+
+# Core numerical libraries
+numpy==1.24.2
+pandas==1.5.3
+
+# Machine Learning / Bayesian modeling
+gpytorch==1.9.1
+torch==2.0.0
+scikit-learn==1.2.1
+scipy==1.10.1
+
+# Geospatial utilities
+shapely==2.0.1
+
+# Plotting/visualization (used in some modules)
+matplotlib==3.6.3
+
+# Note: radp/ modules depend on:
+# - gpytorch & torch (for Bayesian Digital Twin modeling)
+# - numpy & pandas (for data manipulation)
+# - shapely (for geospatial operations in gis_tools)
+# - matplotlib (for plotting utilities)
+# - scikit-learn & scipy (for ML utilities)
+# - Standard library modules: logging, os, pickle, math, collections, etc.

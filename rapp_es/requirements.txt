@@ -1,0 +1,15 @@
+# Requirements for rapp_es main modules
+# Core RL and ML dependencies for Energy Saving RL module
+
+# Reinforcement Learning framework
+stable-baselines3==2.0.0
+
+# RL Environment framework (gymnasium replaces gym)
+gymnasium==0.29.1
+
+# Core data libraries (also used by dependencies)
+numpy==1.24.2
+pandas==1.5.3
+
+# Include all dependencies for apps/ and radp/ modules
+-r dependencies/requirements.txt
