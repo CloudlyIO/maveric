@@ -41,45 +41,40 @@ pip install -r requirements.txt
 ### Step 2: Import in Kafka Worker
 
 ```python
-# In the worker's _handle_message method
 from rapp_es.rl_manager import train_es_rl_async, infer_es_rl_async
 ```
 
 ### Step 3: Add ES Support to Worker
-
-Update the existing `RAppWorker._handle_message()` method:
 
 ```python
 def _handle_message(self, message: str) -> None:
     # ... existing parsing logic ...
 
     if rapp_id == "ES":
-        # Make _handle_message async and add ES support
-        asyncio.run(self._handle_es_message(
+        # Add ES support with async
+        asyncio.run(self._handle_es_training(
             model_id, tenant_id, bdt_id, dataset_id, params, db
         ))
     else:
         # ... existing logic for other rapp_ids ...
 
-async def _handle_es_message(self, model_id, tenant_id, bdt_id, dataset_id, params, db):
+async def _handle_es_training(self, model_id, tenant_id, bdt_id, dataset_id, params, db):
     """Handle ES-specific training requests"""
     try:
         self._update_model(tenant_id, model_id, status="training", db=db)
 
-        # ES Training
+        # ES Training - this is the key call
         trained_model_path = await train_es_rl_async(
             train_days=params.get("train_days", [0, 1, 2, 3]),
             total_timesteps=params.get("total_timesteps", 48000),
-            # Add other params as needed from S3 artifacts
+            # ... add your S3 artifact paths here
         )
 
         # Mark as ready
-        artifact_uri = f"s3://bucket/{tenant_id}/rapps/ES/{model_id}/model.zip"
         self._update_model(
             tenant_id, model_id,
             status="ready",
-            metrics={"kpi": "training_completed"},
-            artifacts=[artifact_uri],
+            artifacts=[f"s3://bucket/{tenant_id}/rapps/ES/{model_id}/model.zip"],
             db=db
         )
 
@@ -111,12 +106,23 @@ await train_es_rl_async(
 ### Inference
 
 ```python
+# Console output (default behavior)
 await infer_es_rl_async(
     target_tick=12,                 # Hour of day (0-23)
     rl_model_path="path/to/model.zip",
     topology_path="path/to/topology.csv"
 )
 # Outputs: Optimal cell configurations to console/logs
+
+# Return structured data for JSON export/storage
+results = await infer_es_rl_async(
+    target_tick=12,
+    rl_model_path="path/to/model.zip",
+    topology_path="path/to/topology.csv",
+    return_results=True
+)
+# Returns: List of dicts with cell predictions
+# Example: [{"cell_id": "cell_1_0", "predicted_state": "ON", "predicted_cell_el_deg": 10.0}]
 ```
 
 ## Kafka Message Format

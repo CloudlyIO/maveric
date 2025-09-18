@@ -121,8 +121,9 @@ def train_es_rl(
 def infer_es_rl(
     target_tick: int,
     rl_model_path: Optional[str] = None,
-    topology_path: Optional[str] = None
-) -> None:
+    topology_path: Optional[str] = None,
+    return_results: bool = False
+) -> Optional[List[dict]]:
     """
     Run inference with the trained Energy Saving RL agent for a specific tick.
 
@@ -134,6 +135,10 @@ def infer_es_rl(
         target_tick: The specific tick/hour (0-23) for inference
         rl_model_path: Path to the trained RL model zip file (default: APP_DIR/energy_saver_agent.zip)
         topology_path: Path to the topology CSV file (default: APP_DIR/data/topology.csv)
+        return_results: If True, returns prediction results as dict instead of printing
+
+    Returns:
+        dict: Prediction results if return_results=True, None otherwise
 
     Raises:
         ValueError: If target_tick is not in valid range (0-23)
@@ -161,12 +166,16 @@ def infer_es_rl(
     logger.info(f"Topology path: {topology_path}")
 
     try:
-        run_rl_prediction(
+        results = run_rl_prediction(
             model_load_path=rl_model_path,
             topology_path=topology_path,
-            target_tick=target_tick
+            target_tick=target_tick,
+            return_results=return_results
         )
         logger.info("--- Inference Completed Successfully ---")
+
+        if return_results:
+            return results
 
     except Exception as e:
         logger.error(f"Inference failed: {e}")
@@ -223,8 +232,9 @@ async def train_es_rl_async(
 async def infer_es_rl_async(
     target_tick: int,
     rl_model_path: Optional[str] = None,
-    topology_path: Optional[str] = None
-) -> None:
+    topology_path: Optional[str] = None,
+    return_results: bool = False
+) -> Optional[List[dict]]:
     """
     Async wrapper for ES RL inference.
 
@@ -232,6 +242,10 @@ async def infer_es_rl_async(
 
     Args:
         Same as infer_es_rl()
+        return_results: If True, returns prediction results as dict instead of printing
+
+    Returns:
+        dict: Prediction results if return_results=True, None otherwise
 
     Raises:
         ValueError: If target_tick is not in valid range (0-23)
@@ -243,14 +257,18 @@ async def infer_es_rl_async(
     logger.info(f"Starting async ES RL inference for tick {target_tick}...")
 
     # Run the synchronous inference function in a thread pool (modern approach)
-    await asyncio.to_thread(
+    results = await asyncio.to_thread(
         infer_es_rl,
         target_tick,
         rl_model_path,
-        topology_path
+        topology_path,
+        return_results
     )
 
     logger.info(f"Async ES RL inference completed for tick {target_tick}")
+
+    if return_results:
+        return results
 
 
 if __name__ == "__main__":

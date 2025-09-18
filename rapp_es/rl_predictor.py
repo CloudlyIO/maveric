@@ -8,6 +8,7 @@
 import logging
 import os
 import sys
+from typing import List, Optional
 
 import pandas as pd
 
@@ -28,11 +29,20 @@ logger = logging.getLogger(__name__)
 TILT_SET = [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 18.0, 20.0]
 
 
-def run_rl_prediction(model_load_path: str, topology_path: str, target_tick: int):
+def run_rl_prediction(model_load_path: str, topology_path: str, target_tick: int, return_results: bool = False) -> Optional[List[dict]]:
     """
     The process of loading a trained RL agent and predicting the optimal cell configuration,
     including tilts and on/off states, is performed by this function. The prediction is executed
     for a specified tick (hour), and the results are presented in a tabular format.
+
+    Args:
+        model_load_path: Path to the trained RL model
+        topology_path: Path to the topology CSV file
+        target_tick: Target tick/hour (0-23)
+        return_results: If True, returns prediction results as dict instead of printing
+
+    Returns:
+        list: Prediction results as list of dicts if return_results=True, None otherwise
     """
     logger.info(f"--- Running RL Energy Saver Prediction for Tick {target_tick} ---")
     if not (0 <= target_tick <= 23):
@@ -69,6 +79,11 @@ def run_rl_prediction(model_load_path: str, topology_path: str, target_tick: int
         print("\n--- Predicted Optimal Configuration ---")
         print(f"--- For Tick/Hour: {target_tick} ---")
         print(predicted_config_df.to_string(index=False))
+        
+        if return_results:
+            return config_list
 
     except Exception as e:
         logger.exception(f"An error occurred during prediction: {e}")
+        if return_results:
+            return []
