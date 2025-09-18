@@ -203,10 +203,8 @@ async def train_es_rl_async(
     """
     logger.info(f"Starting async ES RL training with {total_timesteps} timesteps...")
 
-    # Run the synchronous training function in a thread pool
-    loop = asyncio.get_event_loop()
-    trained_model_path = await loop.run_in_executor(
-        None,
+    # Run the synchronous training function in a thread pool (modern approach)
+    trained_model_path = await asyncio.to_thread(
         train_es_rl,
         train_days,
         total_timesteps,
@@ -244,10 +242,8 @@ async def infer_es_rl_async(
 
     logger.info(f"Starting async ES RL inference for tick {target_tick}...")
 
-    # Run the synchronous inference function in a thread pool
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(
-        None,
+    # Run the synchronous inference function in a thread pool (modern approach)
+    await asyncio.to_thread(
         infer_es_rl,
         target_tick,
         rl_model_path,
