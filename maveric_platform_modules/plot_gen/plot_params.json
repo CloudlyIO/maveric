@@ -1,0 +1,29 @@
+{
+  "default_plot_settings": {
+    "figure_size": [12, 8],
+    "dpi": 100,
+    "grid": true,
+    "legend_position": "upper right",
+    "title_fontsize": 14,
+    "label_fontsize": 12
+  },
+  "colors": {
+    "spatial_types": {
+      "dense": "#FF6B6B",
+      "suburban": "#4ECDC4", 
+      "rural": "#45B7D1"
+    },
+    "ue_colors": {
+      "served": "#2ECC71",
+      "not_served": "#E74C3C"
+    },
+    "cell_towers": "#8E44AD"
+  },
+  "plot_types": {
+    "spatial_areas": true,
+    "cell_towers": true,
+    "voronoi_diagrams": true,
+    "ue_distribution": true,
+    "serving_cells": true
+  }
+}

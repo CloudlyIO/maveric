@@ -1,0 +1,25 @@
+{
+  "default_visualization_settings": {
+    "show_spatial_areas": true,
+    "show_cell_towers": true,
+    "show_voronoi": true,
+    "show_ue_points": true,
+    "show_serving_cells": true,
+    "show_legend": true,
+    "show_grid": true
+  },
+  "marker_sizes": {
+    "ue_points": 20,
+    "cell_towers": 100,
+    "spatial_area_alpha": 0.3
+  },
+  "line_widths": {
+    "voronoi_edges": 1.0,
+    "spatial_area_borders": 2.0
+  },
+  "text_settings": {
+    "cell_labels": true,
+    "tick_labels": true,
+    "coordinate_labels": true
+  }
+}
