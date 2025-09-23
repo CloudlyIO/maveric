@@ -1,22 +1,24 @@
-Maveric Platform Modules
+RADP Datagen (Topology + Spatial Traffic)
 
 Purpose
-- Modular, side‑effect‑free generators for data synthesis. No file writes, no plotting. Everything returns Pandas DataFrames.
+- Modular, side‑effect‑free generators. No file writes, no plotting. Everything returns Pandas DataFrames.
 
 Structure
 ```
-maveric_platform_modules/
-├─ README.md
-├─ topology_gen/
+maveric_platform_modules/radp/util/datagen/
+├─ README.md  # this file
+├─ topology/
 │  ├─ README.md
-│  ├─ __init__.py
-│  └─ topology_gen.py
-└─ spatial_traffic_load_gen/
+│  ├─ __init__.py            # exports topology_gen
+│  ├─ topo.py                # implementation
+│  └─ lib/                   # optional helpers
+└─ spatial_traffic/
    ├─ README.md
-   ├─ __init__.py
-   ├─ spatial_traffic_load_gen.py
-   ├─ spatial_params.json
-   └─ time_params.json
+   ├─ __init__.py            # exports spatial_traffic_load_gen + loaders
+   ├─ spatial_traffic.py     # implementation
+   └─ lib/
+      ├─ spatial_params.json
+      └─ time_params.json
 ```
 
 Install
@@ -24,10 +26,10 @@ Install
 pip install pandas numpy shapely scipy
 ```
 
-Quick Start
+Quick Start (New Paths)
 ```
-from maveric_platform_modules.topology_gen.topology_gen import topology_gen
-from maveric_platform_modules.spatial_traffic_load_gen import (
+from maveric_platform_modules.radp.util.datagen.topology import topology_gen
+from maveric_platform_modules.radp.util.datagen.spatial_traffic import (
     spatial_traffic_load_gen,
     load_default_spatial_params,
     load_default_time_params,
@@ -50,7 +52,6 @@ ue_days = spatial_traffic_load_gen(
     num_ues=300,
 )
 
-# Verify (prints shapes; no files written)
 print('topology/config/dummy:', topology_df.shape, config_df.shape, dummy_train_df.shape)
 print('day1/day2:', ue_days[0].shape, ue_days[1].shape)
 ```

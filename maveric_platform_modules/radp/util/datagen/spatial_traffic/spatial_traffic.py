@@ -229,7 +229,7 @@ def spatial_traffic_load_gen(
 
 
 def load_default_spatial_params() -> Dict[str, Any]:
-    p = Path(__file__).resolve().parent / "spatial_params.json"
+    p = Path(__file__).resolve().parent / "lib" / "spatial_params.json"
     if p.exists():
         import json
         with open(p, "r") as f:
@@ -238,7 +238,7 @@ def load_default_spatial_params() -> Dict[str, Any]:
 
 
 def load_default_time_params() -> Dict[str, Any]:
-    p = Path(__file__).resolve().parent / "time_params.json"
+    p = Path(__file__).resolve().parent / "lib" / "time_params.json"
     if p.exists():
         import json
         with open(p, "r") as f:
@@ -252,5 +252,3 @@ def load_default_time_params() -> Dict[str, Any]:
         },
     }
 
-
-# Intentionally minimal: dummy training generation belongs in the topology module now.

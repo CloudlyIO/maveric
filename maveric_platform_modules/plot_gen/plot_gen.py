@@ -26,11 +26,11 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 
 # Import the generation functions from sibling modules
-from ..topology_gen.topology_gen import topology_gen
-from ..spatial_traffic_load_gen.spatial_traffic_load_gen import (
-    spatial_traffic_load_gen, 
-    load_default_spatial_params, 
-    load_default_time_params
+from ..radp.util.datagen.topology.topo import topology_gen
+from ..radp.util.datagen.spatial_traffic import (
+    spatial_traffic_load_gen,
+    load_default_spatial_params,
+    load_default_time_params,
 )
 
 # Optional imports for advanced plotting features
@@ -478,7 +478,7 @@ def plot_gen(
     
     # --- Step 3: Generate Spatial Layout for Visualization ---
     # Create the spatial area definitions needed for background visualization
-    from ..spatial_traffic_load_gen.spatial_traffic_load_gen import TrafficDemandModel
+    from ..radp.util.datagen.spatial_traffic.spatial_traffic import TrafficDemandModel
     model = TrafficDemandModel()
     spatial_layout = model.generate_spatial_layout(topology_df=topology_df, spatial_params=spatial_params)
     logger.info(f"Generated spatial layout with {len(spatial_layout)} spatial cells")
