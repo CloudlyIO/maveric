@@ -1,0 +1,16 @@
+cell_id,predicted_state,predicted_cell_el_deg
+cell_1_0,ON,20.0
+cell_1_1,OFF,N/A
+cell_1_2,ON,18.0
+cell_2_0,ON,20.0
+cell_2_1,ON,8.0
+cell_2_2,OFF,N/A
+cell_3_0,OFF,N/A
+cell_3_1,ON,2.0
+cell_3_2,OFF,N/A
+cell_4_0,OFF,N/A
+cell_4_1,ON,8.0
+cell_4_2,OFF,N/A
+cell_5_0,OFF,N/A
+cell_5_1,ON,16.0
+cell_5_2,ON,20.0
