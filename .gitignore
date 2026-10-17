@@ -70,6 +70,9 @@ srv/
 # lock files
 *.lock
 
+# lock files
+*.lock
+
 # notebook data
 notebooks/data/sim_data/
 notebooks/data/mro_data/
@@ -97,3 +100,19 @@ apps/load_balancing/cco_rl_agent_multiday.zip
 # bdt model files
 apps/energy_savings/bdt_model_map.pickle
 apps/load_balancing/bdt_model_map.pickle
+
+# agent dev
+agentic_mobility_docs
+radp/digital_twin/agentic_mobility/examples/generated_ues
+notebooks/data/agentic_data
+
+# pre-commit hook
+.flake8
+session.md
+venv/
+Task 3.1.md
+Task 3.2.md
+Task 3.3.md
+Task 3.4.md
+Task 3.5.md
+sprint_implementation_report.md

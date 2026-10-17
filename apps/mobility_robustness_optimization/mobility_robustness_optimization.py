@@ -485,6 +485,12 @@ def _compute_row_level_sinr(signal_dbm: float, interference_dbm_list: list, nois
 
     sinr_linear = signal_linear / (interference_linear + noise_linear)
     return 10 * np.log10(sinr_linear)
+    signal_linear = 10 ** (signal_dbm / 10)
+    interference_linear = sum(10 ** (p / 10) for p in interference_dbm_list)
+    noise_linear = 10 ** (noise_db / 10)
+
+    sinr_linear = signal_linear / (interference_linear + noise_linear)
+    return 10 * np.log10(sinr_linear)
 
 
 # Functions for MRO metrics and Handover events
