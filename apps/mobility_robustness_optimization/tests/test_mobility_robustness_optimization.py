@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import numpy as np
 import pandas as pd
+from linear_operator.utils.errors import NotPSDError
 
 from apps.mobility_robustness_optimization.mobility_robustness_optimization import (
     BayesianDigitalTwin,
@@ -89,6 +90,22 @@ class TestMobilityRobustnessOptimization(unittest.TestCase):
 
     def test_train_or_update_rf_twin(self):  # TODO: Implement AFTER PR
         pass
+
+    def test_train_or_update_rf_twins_raises_when_update_fails(self):
+        new_data = pd.DataFrame(
+            {
+                "longitude": [10.0, 10.0, 20.0, 20.0],
+                "latitude": [5.0, 5.0, 6.0, 6.0],
+                "cell_id": ["cell_001", "cell_002", "cell_001", "cell_002"],
+                "cell_rxpwr_dbm": [-80.0, -90.0, -85.0, -95.0],
+            }
+        )
+        failure = NotPSDError("Matrix not positive definite after repeatedly adding jitter up to 1.0e-04.")
+
+        # a failed update must reach the caller, not leave the stale twin in place silently
+        with patch.object(self.mro, "_update", side_effect=failure):
+            with self.assertRaises(NotPSDError):
+                self.mro.train_or_update_rf_twins(new_data)
 
     def test_solve(self):  # TODO: Implement AFTER PR
         pass

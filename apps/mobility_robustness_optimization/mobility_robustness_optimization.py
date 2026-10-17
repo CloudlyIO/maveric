@@ -111,8 +111,6 @@ class MobilityRobustnessOptimization(ABC):
             logger.error(f"ValueError: {ve}")
         except KeyError as ke:
             logger.error(f"KeyError: {ke}")
-        except Exception as e:
-            logger.exception(f"An unexpected error occurred: {e}")
 
     def save_bdt(self, file_relative_path="data/mro_data") -> bool:
         """

@@ -13,6 +13,7 @@ import unittest
 
 import numpy as np
 import pandas as pd
+import torch
 from sklearn.model_selection import train_test_split
 
 from radp.utility.simulation_utils import seed_everything
@@ -380,3 +381,78 @@ class TestKernel(unittest.TestCase):
         twin, _ = self._twin(ard=False)
         lengthscale = twin.model.covar_module.base_kernel.lengthscale
         self.assertEqual(lengthscale.shape[-1], 1)
+
+
+def _smooth_cell_frame(n, rng):
+    """Near-noiseless smooth Rx field over two features, like the MRO training data."""
+    a, b = rng.uniform(0, 1, n), rng.uniform(0, 1, n)
+    return pd.DataFrame({"cell_id": "Cell1", "a": a, "b": b, "y": -80 + 0.3 * np.sin(3 * a) + 0.2 * np.cos(2 * b)})
+
+
+class TestFantasyUpdate(unittest.TestCase):
+    """update_trained_gpmodel must give the exact GP posterior above 800 training rows, where
+    gpytorch's predictions cache a float32 Lanczos inverse instead of a Cholesky one."""
+
+    # trained MRO twins land at roughly these hyperparameters
+    OUTPUTSCALE, LENGTHSCALE, NOISE = 3.6, 0.6, 0.005
+
+    def setUp(self):
+        torch.manual_seed(0)
+        self.rng = np.random.default_rng(0)
+        self.train = _smooth_cell_frame(2000, self.rng)
+        self.test = _smooth_cell_frame(100, self.rng)
+        self.twin = BayesianDigitalTwin([self.train], ["a", "b"], ["y"])
+        self.twin.model.covar_module.outputscale = self.OUTPUTSCALE
+        self.twin.model.covar_module.base_kernel.lengthscale = self.LENGTHSCALE
+        self.twin.model.likelihood.noise = self.NOISE
+
+    def _exact_posterior_mean(self, observed):
+        """Exact RBF-GP posterior mean in float64 numpy, normalized with the initial training stats."""
+        x_min, x_max = self.train[["a", "b"]].min().values, self.train[["a", "b"]].max().values
+        y_mean, y_std = self.train["y"].mean(), self.train["y"].std()
+        outputscale = self.twin.model.covar_module.outputscale.item()
+        lengthscale = self.twin.model.covar_module.base_kernel.lengthscale.flatten()[0].item()
+        noise = self.twin.model.likelihood.noise.item()
+
+        def scaled(df):
+            return (df[["a", "b"]].values - x_min) / (x_max - x_min) / lengthscale
+
+        def rbf(p, q):
+            return outputscale * np.exp(-0.5 * ((p[:, None, :] - q[None, :, :]) ** 2).sum(-1))
+
+        x_obs, x_test = scaled(observed), scaled(self.test)
+        y_obs = (observed["y"].values - y_mean) / y_std
+        k_obs = rbf(x_obs, x_obs) + noise * np.eye(len(x_obs))
+        mean = rbf(x_test, x_obs) @ np.linalg.solve(k_obs, y_obs)
+        return mean * y_std + y_mean
+
+    def _predicted_mean(self):
+        means, _ = self.twin.predict_distributed_gpmodel([self.test.copy()])
+        return np.ravel(means)
+
+    def test_update_after_predict_matches_exact_posterior(self):
+        self._predicted_mean()  # MRO predicts (solve) before it updates, which builds the caches
+        new = _smooth_cell_frame(500, self.rng)
+
+        self.twin.update_trained_gpmodel([new])
+
+        expected = self._exact_posterior_mean(pd.concat([self.train, new]))
+        np.testing.assert_allclose(self._predicted_mean(), expected, atol=1e-3)
+
+    def test_chained_updates_match_exact_posterior(self):
+        observed = self.train
+        for _ in range(3):
+            self._predicted_mean()
+            new = _smooth_cell_frame(500, self.rng)
+            self.twin.update_trained_gpmodel([new])
+            observed = pd.concat([observed, new])
+
+            np.testing.assert_allclose(self._predicted_mean(), self._exact_posterior_mean(observed), atol=1e-3)
+
+    def test_update_without_prior_predict_matches_exact_posterior(self):
+        new = _smooth_cell_frame(500, self.rng)
+
+        self.twin.update_trained_gpmodel([new])
+
+        expected = self._exact_posterior_mean(pd.concat([self.train, new]))
+        np.testing.assert_allclose(self._predicted_mean(), expected, atol=1e-3)

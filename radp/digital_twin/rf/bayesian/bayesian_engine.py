@@ -522,14 +522,15 @@ class BayesianDigitalTwin:
         """
         data_in: new training data across all cells and for one or more simulations
 
-        Pre-condition : This method assumes that the model is already trained and
-        prediction is run on the model at least once. New data observations can only
-        be added after making predictions with a model so that all test independent
-        caches exist.
+        Pre-condition : This method assumes that the model is already trained.
+        New observations are added as a GP fantasy update; hyperparameters are not
+        re-learned.
 
-        If you have a trained model, you can run predict on the model.
-        This way, you can use the model that has been trained and has prediction run
-        on it and can be used to update the model using the new observations.
+        The fantasy update reuses the model's cached inverse of the training covariance.
+        Above gpytorch's max_cholesky_size (800 rows), predictions cache a float32 Lanczos
+        approximation of that inverse, and the update built on it is not positive definite
+        (NotPSDError) or is silently wrong. So the caches are rebuilt here with exact
+        Cholesky solves first, which also means predict no longer has to run beforehand.
 
         """
 
@@ -541,7 +542,14 @@ class BayesianDigitalTwin:
             train_X = train_X.cuda()
             train_Y = train_Y.cuda()
 
-        self.model = self.model.get_fantasy_model(inputs=train_X, targets=train_Y)
+        num_rows = self.model.train_inputs[0].shape[-2] + train_X.shape[-2]
+        with gpytorch.settings.max_cholesky_size(num_rows):
+            # drop the caches built by approximate predictions and rebuild them exactly
+            self.model.eval()
+            self.model.prediction_strategy = None
+            with torch.no_grad():
+                self.model(self.model.train_inputs[0][..., :1, :])
+            self.model = self.model.get_fantasy_model(inputs=train_X, targets=train_Y)
 
     def predict_distributed_gpmodel(
         self,
