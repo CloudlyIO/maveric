@@ -325,3 +325,58 @@ class TestBayesianDigitalTwin(unittest.TestCase):
             )
             self.assertEqual(self.expected_mae[cell_id], MAE)
             self.assertEqual(self.expected_mape[cell_id], MAPE)
+
+
+def _bearing_gap_deg(a, b):
+    """Absolute angular difference in degrees, wrapped to [0, 180]."""
+    return np.abs((np.asarray(a) - np.asarray(b) + 180) % 360 - 180)
+
+
+class TestBearingConvention(unittest.TestCase):
+    """Training, prediction-service and prediction-frame features must use the same bearing."""
+
+    def setUp(self):
+        self.site_configs_df, self.ue_data_df = get_sample_site_config_and_ue_data()
+        self.site_configs_df["hTx"] = 30.0
+        self.site_configs_df["hRx"] = 1.5
+        template = self.ue_data_df[["lon", "lat"]].rename(columns={"lon": "loc_x", "lat": "loc_y"})
+        self.prediction_frames = BayesianDigitalTwin.create_prediction_frames(self.site_configs_df, template)
+
+    def _assert_matches_prediction_frames(self, preprocessed):
+        for cell_id, frame in preprocessed.items():
+            expected = self.prediction_frames[cell_id].loc[frame.index, constants.RELATIVE_BEARING]
+            gap = _bearing_gap_deg(frame[constants.RELATIVE_BEARING], expected)
+            self.assertLess(gap.max(), 1e-6, f"{cell_id}: bearing off by up to {gap.max():.3f} deg")
+
+    def test_training_preprocess_matches_prediction_frames(self):
+        preprocessed = BayesianDigitalTwin.preprocess_ue_training_data(
+            self.ue_data_df.copy(), self.site_configs_df.copy()
+        )
+        self._assert_matches_prediction_frames(preprocessed)
+
+    def test_prediction_preprocess_matches_prediction_frames(self):
+        preprocessed = BayesianDigitalTwin.preprocess_ue_prediction_data(
+            self.ue_data_df.copy(),
+            self.site_configs_df[["cell_id", "cell_el_deg"]].copy(),
+            self.site_configs_df.copy(),
+        )
+        self._assert_matches_prediction_frames(preprocessed)
+
+
+class TestKernel(unittest.TestCase):
+    def _twin(self, **kwargs):
+        site_configs_df, ue_data_df = get_sample_site_config_and_ue_data()
+        augment_ue_data(ue_data_df, site_configs_df)
+        cell_data = ue_data_df[ue_data_df.cell_id == "Cell1"]
+        x_columns = [constants.CELL_EL_DEG, constants.LOG_DISTANCE, constants.RELATIVE_BEARING]
+        return BayesianDigitalTwin([cell_data], x_columns, ["avg_rsrp"], **kwargs), len(x_columns)
+
+    def test_ard_gives_one_lengthscale_per_feature_by_default(self):
+        twin, num_features = self._twin()
+        lengthscale = twin.model.covar_module.base_kernel.lengthscale
+        self.assertEqual(lengthscale.shape[-1], num_features)
+
+    def test_ard_can_be_disabled(self):
+        twin, _ = self._twin(ard=False)
+        lengthscale = twin.model.covar_module.base_kernel.lengthscale
+        self.assertEqual(lengthscale.shape[-1], 1)

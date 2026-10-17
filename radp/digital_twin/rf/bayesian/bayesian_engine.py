@@ -33,11 +33,16 @@ class NormMethod(Enum):
 
 class ExactGPModel(gpytorch.models.ExactGP):
     # We will use the simplest form of GP model, exact inference
-    def __init__(self, train_x, train_y, likelihood):
+    def __init__(self, train_x, train_y, likelihood, ard_num_dims: Optional[int] = None):
         super(ExactGPModel, self).__init__(train_x, train_y, likelihood)
         self.mean_module = gpytorch.means.ConstantMean(batch_shape=torch.Size([1]))
+        # ard_num_dims gives each feature its own lengthscale; with a single shared
+        # lengthscale, fitting fine spatial structure also makes the model unable to
+        # interpolate along smooth features such as tilt
         self.covar_module = gpytorch.kernels.ScaleKernel(
-            gpytorch.kernels.RBFKernel(batch_shape=torch.Size([1])),
+            gpytorch.kernels.RBFKernel(
+                batch_shape=torch.Size([1]), ard_num_dims=ard_num_dims
+            ),
             batch_shape=torch.Size([1]),
         )
 
@@ -56,6 +61,7 @@ class BayesianDigitalTwin:
         norm_method: NormMethod = NormMethod.MINMAX,
         x_max: Optional[Dict[str, float]] = None,
         x_min: Optional[Dict[str, float]] = None,
+        ard: bool = True,
     ):
         """
         `data_in` is a list of Pandas dataframes, where each one corresponds to
@@ -71,6 +77,9 @@ class BayesianDigitalTwin:
         during input pre-training normalization.
 
         `data_in` and `stats` may be constructed using `get_percell_data`.
+
+        `ard` gives each x column its own kernel lengthscale (default). Set it to
+        False for the original single shared lengthscale.
         """
         self.is_cuda = False
         if torch.cuda.is_available():
@@ -120,7 +129,12 @@ class BayesianDigitalTwin:
             batch_shape=torch.Size([self.num_cells])
         )
 
-        self.model = ExactGPModel(train_X, train_Y, likelihood)
+        self.model = ExactGPModel(
+            train_X,
+            train_Y,
+            likelihood,
+            ard_num_dims=self.num_features if ard else None,
+        )
 
     def _create_training_tensors(
         self,
@@ -206,20 +220,14 @@ class BayesianDigitalTwin:
                     ),
                 )
             )
-            ue_training_data_df.at[i, "relative_bearing"] = GISTools.rel_bearing(
+            # bearing of the UE as seen from the cell -- same convention as
+            # create_prediction_frames, so training and inference features agree
+            ue_training_data_df.at[i, "relative_bearing"] = GISTools.get_relative_bearing(
                 ue_training_data_df.at[i, "cell_az_deg"],
-                GISTools.convert_bearing_0_to_360(
-                    GISTools.get_bearing(
-                        (
-                            ue_training_data_df.at[i, "lat"],
-                            ue_training_data_df.at[i, "lon"],
-                        ),
-                        (
-                            ue_training_data_df.at[i, "cell_lat"],
-                            ue_training_data_df.at[i, "cell_lon"],
-                        ),
-                    )
-                ),
+                ue_training_data_df.at[i, "cell_lat"],
+                ue_training_data_df.at[i, "cell_lon"],
+                ue_training_data_df.at[i, "lat"],
+                ue_training_data_df.at[i, "lon"],
             )
 
         ue_training_data_df.cell_id = ue_training_data_df.cell_id
@@ -276,20 +284,14 @@ class BayesianDigitalTwin:
                     (ue_data_df.at[i, "lat"], ue_data_df.at[i, "lon"]),
                 )
             )
-            ue_data_df.at[i, "relative_bearing"] = GISTools.rel_bearing(
+            # bearing of the UE as seen from the cell -- same convention as
+            # create_prediction_frames, so training and inference features agree
+            ue_data_df.at[i, "relative_bearing"] = GISTools.get_relative_bearing(
                 ue_data_df.at[i, "cell_az_deg"],
-                GISTools.convert_bearing_0_to_360(
-                    GISTools.get_bearing(
-                        (
-                            ue_data_df.at[i, "lat"],
-                            ue_data_df.at[i, "lon"],
-                        ),
-                        (
-                            ue_data_df.at[i, "cell_lat"],
-                            ue_data_df.at[i, "cell_lon"],
-                        ),
-                    )
-                ),
+                ue_data_df.at[i, "cell_lat"],
+                ue_data_df.at[i, "cell_lon"],
+                ue_data_df.at[i, "lat"],
+                ue_data_df.at[i, "lon"],
             )
 
         ue_data_df.cell_id = ue_data_df.cell_id
