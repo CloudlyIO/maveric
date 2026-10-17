@@ -95,6 +95,9 @@ class SVGPTrainConfig:
     # SVGP forward pass (IndependentMultitaskVariationalStrategy). Set False to
     # fall back to the sequential per-cell path for accuracy comparison.
     multicell_batched: bool = True
+    # One kernel lengthscale per x column (default). False keeps the original
+    # single shared lengthscale.
+    ard: bool = True
 
 
 @dataclass
@@ -113,7 +116,7 @@ class SVGPUpdateConfig:
 class SVGPGPModel(gpytorch.models.ApproximateGP):
     """Single-cell SVGP (used in per-cell fallback path)."""
 
-    def __init__(self, inducing_points: torch.Tensor):
+    def __init__(self, inducing_points: torch.Tensor, ard_num_dims: Optional[int] = None):
         m = inducing_points.size(-2)
         var_dist = TrilNaturalVariationalDistribution(m)
         # VariationalStrategy in gpytorch uses whitened parameterisation by default
@@ -126,7 +129,9 @@ class SVGPGPModel(gpytorch.models.ApproximateGP):
         )
         super().__init__(var_strat)
         self.mean_module = gpytorch.means.ConstantMean()
-        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
+        self.covar_module = gpytorch.kernels.ScaleKernel(
+            gpytorch.kernels.RBFKernel(ard_num_dims=ard_num_dims)
+        )
 
     def forward(self, x: torch.Tensor):
         return gpytorch.distributions.MultivariateNormal(
@@ -146,7 +151,7 @@ class MultiCellSVGPModel(gpytorch.models.ApproximateGP):
     single batched LAPACK Cholesky on [num_cells, M, M] — the main vectorization win.
     """
 
-    def __init__(self, inducing_points: torch.Tensor):
+    def __init__(self, inducing_points: torch.Tensor, ard_num_dims: Optional[int] = None):
         num_cells = inducing_points.shape[0]
         batch_shape = torch.Size([num_cells])
         var_dist = TrilNaturalVariationalDistribution(
@@ -161,7 +166,7 @@ class MultiCellSVGPModel(gpytorch.models.ApproximateGP):
         super().__init__(var_strat)
         self.mean_module = gpytorch.means.ConstantMean(batch_shape=batch_shape)
         self.covar_module = gpytorch.kernels.ScaleKernel(
-            gpytorch.kernels.RBFKernel(batch_shape=batch_shape),
+            gpytorch.kernels.RBFKernel(batch_shape=batch_shape, ard_num_dims=ard_num_dims),
             batch_shape=batch_shape,
         )
 
@@ -225,7 +230,10 @@ class SVGPDigitalTwin(DTModel):
         hTx: float,
         hRx: float,
         cell_el_deg: float,
+        keep_row_tilt: bool = False,
     ) -> pd.DataFrame:
+        """`keep_row_tilt`: keep each row's own cell_el_deg (measurements taken at
+        different tilts) and use `cell_el_deg` only where a row has none."""
         out = df.copy()
         if c.LAT not in out.columns and c.LOC_Y in out.columns:
             out[c.LAT] = out[c.LOC_Y]
@@ -238,7 +246,10 @@ class SVGPDigitalTwin(DTModel):
         out[c.CELL_LAT] = cell_lat
         out[c.CELL_LON] = cell_lon
         out[c.CELL_AZ_DEG] = cell_az_deg
-        out[c.CELL_EL_DEG] = cell_el_deg
+        if keep_row_tilt and c.CELL_EL_DEG in out.columns:
+            out[c.CELL_EL_DEG] = out[c.CELL_EL_DEG].astype(float).fillna(cell_el_deg)
+        else:
+            out[c.CELL_EL_DEG] = cell_el_deg
         out[c.HTX] = hTx
         out[c.HRX] = hRx
         # Vectorized GIS calls — 1 numpy expression per column instead of N Python loops
@@ -251,7 +262,7 @@ class SVGPDigitalTwin(DTModel):
             cell_az_deg, cell_lat, cell_lon, lat_arr, lon_arr
         )
         out[c.ANTENNA_GAIN] = GISTools.get_antenna_gain(
-            hTx, hRx, out[c.LOG_DISTANCE], cell_el_deg
+            hTx, hRx, out[c.LOG_DISTANCE], out[c.CELL_EL_DEG]
         )
         return out
 
@@ -285,6 +296,7 @@ class SVGPDigitalTwin(DTModel):
                 hTx=row[c.HTX],
                 hRx=row[c.HRX],
                 cell_el_deg=row[c.CELL_EL_DEG],
+                keep_row_tilt=True,
             )
             if c.CELL_CARRIER_FREQ_MHZ in row.index:
                 frame[c.CELL_CARRIER_FREQ_MHZ] = row[c.CELL_CARRIER_FREQ_MHZ]
@@ -461,6 +473,9 @@ class SVGPDigitalTwin(DTModel):
     def predict(
         self, prediction_dfs: List[pd.DataFrame]
     ) -> Tuple[np.ndarray, np.ndarray]:
+        """Returns (means, stds), each [max rows, num cells] with one column per
+        frame in `_cell_ids` order. Frames may differ in length; a shorter frame's
+        column is NaN past its own rows. Each frame also gets rxpower columns."""
         if not self.is_trained:
             raise RuntimeError("SVGPDigitalTwin must be trained before prediction")
         if len(prediction_dfs) != len(self._cell_ids):
@@ -495,23 +510,16 @@ class SVGPDigitalTwin(DTModel):
                 raise ValueError(f"expected {len(self._models)} update frames")
         cfg = config or SVGPUpdateConfig()
         train_X, train_Y = self._create_training_tensors(data_in)
-        cell_losses = []
         if self._multicell_batched:
-            model = self._models[0]
-            likelihood = self._likelihoods[0]
-            for i, (new_X, new_Y) in enumerate(zip(train_X, train_Y)):
-                # Update each cell's slice of the batched model individually
-                # (streaming EM approximation — per-cell for simplicity in v1)
-                cell_losses.append(
-                    self._update_cell(model, likelihood, new_X, new_Y, cfg)
-                )
+            # one batched loop: each cell's slice is fitted to that cell's rows only
+            cell_losses = self._update_multicell(train_X, train_Y, cfg)
         else:
-            for model, likelihood, new_X, new_Y in zip(
-                self._models, self._likelihoods, train_X, train_Y
-            ):
-                cell_losses.append(
-                    self._update_cell(model, likelihood, new_X, new_Y, cfg)
+            cell_losses = [
+                self._update_cell(model, likelihood, new_X, new_Y, cfg)
+                for model, likelihood, new_X, new_Y in zip(
+                    self._models, self._likelihoods, train_X, train_Y
                 )
+            ]
         max_len = max(len(l) for l in cell_losses)
         out = np.full((len(cell_losses), max_len), np.nan)
         for idx, losses in enumerate(cell_losses):
@@ -543,8 +551,9 @@ class SVGPDigitalTwin(DTModel):
         self._models = []
         self._likelihoods = []
         cell_losses = []
+        ard_num_dims = train_X[0].size(1) if cfg.ard else None
         for inducing_points, cell_X, cell_Y in zip(inducing_list, train_X, train_Y):
-            model = SVGPGPModel(inducing_points)
+            model = SVGPGPModel(inducing_points, ard_num_dims=ard_num_dims)
             likelihood = gpytorch.likelihoods.GaussianLikelihood(
                 noise_constraint=GreaterThan(cfg.noise_floor)
             )
@@ -637,17 +646,14 @@ class SVGPDigitalTwin(DTModel):
     ) -> np.ndarray:
         """Train all cells in a single batched forward/backward pass.
 
-        Padding strategy: cells have unequal N_i.  We pad each cell's data to
-        N_max with zeros and track a boolean mask.  The ELBO loss for each cell
-        is re-weighted by (N_real_i / N_max) so padded rows contribute 0 to the
-        gradient.  KL term uses num_data=min(N_i) (conservative) so no cell
-        over-penalises the prior.
+        Cells may have unequal N_i. Every step draws a full batch of real rows
+        for every cell (smaller cells cycle through their rows more often), so no
+        cell is ever trained on padding. Each cell's KL term is scaled by its own
+        N_i -- see `_batched_neg_elbo`.
         """
         device = self.device
         num_cells = len(train_X)
         n_real = torch.tensor([t.size(0) for t in train_X], dtype=torch.float32)
-        N_max = int(n_real.max().item())
-        d = train_X[0].size(1)
 
         # All cells must share the same M for the batched model.
         # Use min over cells so no cell is asked for more inducing points than samples.
@@ -672,22 +678,9 @@ class SVGPDigitalTwin(DTModel):
         # Stack inducing points: [num_cells, M, d]
         inducing_pts = torch.stack(inducing_list).to(device)
 
-        # Pad training data to [num_cells, N_max, d] / [num_cells, N_max]
-        X_pad = torch.zeros(num_cells, N_max, d, dtype=torch.float32)
-        Y_pad = torch.zeros(num_cells, N_max, dtype=torch.float32)
-        mask = torch.zeros(num_cells, N_max, dtype=torch.bool)
-        for i, (xi, yi) in enumerate(zip(train_X, train_Y)):
-            ni = xi.size(0)
-            X_pad[i, :ni] = xi
-            Y_pad[i, :ni] = yi
-            mask[i, :ni] = True
-
-        X_pad = X_pad.to(device)
-        Y_pad = Y_pad.to(device)
-        mask = mask.to(device)
-        n_real_dev = n_real.to(device)
-
-        model = MultiCellSVGPModel(inducing_pts)
+        model = MultiCellSVGPModel(
+            inducing_pts, ard_num_dims=train_X[0].size(1) if cfg.ard else None
+        )
         # Noise floor per cell
         likelihood = gpytorch.likelihoods.GaussianLikelihood(
             batch_shape=torch.Size([num_cells]),
@@ -698,64 +691,128 @@ class SVGPDigitalTwin(DTModel):
         model.train()
         likelihood.train()
 
+        all_epoch_losses = self._fit_batched(
+            model,
+            likelihood,
+            train_X,
+            train_Y,
+            num_epochs=cfg.num_epochs,
+            batch_size=cfg.batch_size,
+            learning_rate=cfg.learning_rate,
+            ngd_lr=cfg.ngd_lr,
+            stopping_threshold=cfg.stopping_threshold,
+            cholesky_jitter=cfg.cholesky_jitter,
+            cholesky_max_tries=cfg.cholesky_max_tries,
+            seed=cfg.seed,
+            freeze_inducing_at=int(cfg.num_epochs * cfg.freeze_inducing_after_frac),
+        )
+
+        self._models = [model]
+        self._likelihoods = [likelihood]
+
+        max_len = max(len(l) for l in all_epoch_losses)
+        out = np.full((num_cells, max_len), np.nan)
+        for idx, losses in enumerate(all_epoch_losses):
+            out[idx, : len(losses)] = losses
+        return out
+
+    @staticmethod
+    def _batched_neg_elbo(
+        model: MultiCellSVGPModel,
+        likelihood: gpytorch.likelihoods.GaussianLikelihood,
+        bx: torch.Tensor,
+        by: torch.Tensor,
+        num_data: torch.Tensor,
+    ) -> torch.Tensor:
+        """Negative ELBO per datum for every cell, shape [num_cells].
+
+        Same as gpytorch's VariationalELBO, except each cell's KL term is scaled
+        by that cell's own data size `num_data[i]` instead of one shared value.
+        """
+        expected_log_lik = likelihood.expected_log_prob(by, model(bx)).mean(-1)
+        kl = model.variational_strategy.kl_divergence() / num_data
+        return kl - expected_log_lik
+
+    def _fit_batched(
+        self,
+        model: MultiCellSVGPModel,
+        likelihood: gpytorch.likelihoods.GaussianLikelihood,
+        train_X: List[torch.Tensor],
+        train_Y: List[torch.Tensor],
+        *,
+        num_epochs: int,
+        batch_size: int,
+        learning_rate: float,
+        ngd_lr: float,
+        stopping_threshold: float,
+        cholesky_jitter: float,
+        cholesky_max_tries: int,
+        seed: int,
+        freeze_inducing_at: Optional[int] = None,
+    ) -> List[List[float]]:
+        """Shared batched loop for multicell training and updates.
+
+        The summed loss weights each cell by N_i / N_ref and NGD uses
+        num_data=N_ref, so every cell takes the same natural-gradient step it
+        would take if trained alone. With equal N_i this is the plain sum of
+        per-cell ELBOs. Returns per-cell epoch losses (negative ELBO per datum).
+        """
+        device = self.device
+        num_cells = len(train_X)
+        X = [x.to(device) for x in train_X]
+        Y = [y.to(device) for y in train_Y]
+        n_real = torch.tensor([x.size(0) for x in X], dtype=torch.float32, device=device)
+        n_max = int(n_real.max().item())
+        n_ref = n_max
+
+        bs = batch_size if device.type == "cpu" else max(batch_size, 4096)
+        bs = min(bs, n_max)
+        steps_per_epoch = -(-n_max // bs)
+
         var_params = list(
             model.variational_strategy._variational_distribution.parameters()
         )
-        hyper_params = list(model.hyperparameters()) + list(likelihood.parameters())
-        # num_data for NGD: use mean real-sample count across cells
-        mean_n = int(n_real.mean().item())
-        ngd = NGD(var_params, num_data=mean_n, lr=cfg.ngd_lr)
-        adam = torch.optim.Adam(hyper_params, lr=cfg.learning_rate)
-        # VariationalELBO with num_data = min cell size (conservative KL scaling)
-        min_n = int(n_real.min().item())
-        mll = gpytorch.mlls.VariationalELBO(likelihood, model, num_data=min_n)
+        hyper_params = [
+            p
+            for p in list(model.hyperparameters()) + list(likelihood.parameters())
+            if p.requires_grad
+        ]
+        ngd = NGD(var_params, num_data=n_ref, lr=ngd_lr)
+        adam = torch.optim.Adam(hyper_params, lr=learning_rate) if hyper_params else None
 
-        bs = cfg.batch_size if device.type == "cpu" else max(cfg.batch_size, 4096)
-        freeze_at = int(cfg.num_epochs * cfg.freeze_inducing_after_frac)
-
-        # Epoch losses per cell, accumulated as sample-weighted average
         all_epoch_losses: List[List[float]] = [[] for _ in range(num_cells)]
-        jitter = cfg.cholesky_jitter
+        jitter = cholesky_jitter
         consec_failures = 0
 
-        for epoch in range(cfg.num_epochs):
-            if epoch == freeze_at:
+        for epoch in range(num_epochs):
+            if epoch == freeze_inducing_at:
                 model.variational_strategy.inducing_points.requires_grad_(False)
 
-            # Shuffle real indices per cell, keep pads at tail
-            perm = torch.stack([
-                torch.cat([
-                    torch.randperm(int(n_real[i].item()),
-                                   generator=torch.Generator().manual_seed(cfg.seed + epoch * num_cells + i)),
-                    torch.arange(int(n_real[i].item()), N_max),
-                ])
-                for i in range(num_cells)
-            ]).to(device)  # [num_cells, N_max]
-
-            X_shuf = X_pad.gather(1, perm.unsqueeze(-1).expand(-1, -1, d))
-            Y_shuf = Y_pad.gather(1, perm)
-            M_shuf = mask.gather(1, perm)
+            gen = torch.Generator().manual_seed(seed + epoch)
+            perms = [torch.randperm(x.size(0), generator=gen).to(device) for x in X]
 
             running = torch.zeros(num_cells, device=device)
-            seen = torch.zeros(num_cells, device=device)
-
-            for start in range(0, N_max, bs):
-                bx = X_shuf[:, start:start + bs, :]   # [C, B, d]
-                by = Y_shuf[:, start:start + bs]       # [C, B]
-                bm = M_shuf[:, start:start + bs]       # [C, B] bool
+            done_steps = 0
+            for step in range(steps_per_epoch):
+                # each cell takes its next bs rows, wrapping around its own permutation
+                pos = torch.arange(step * bs, (step + 1) * bs, device=device)
+                idx = [perm[pos % perm.numel()] for perm in perms]
+                bx = torch.stack([x[i] for x, i in zip(X, idx)])  # [C, B, d]
+                by = torch.stack([y[i] for y, i in zip(Y, idx)])  # [C, B]
 
                 with gpytorch.settings.cholesky_jitter(float(jitter)), \
-                        gpytorch.settings.cholesky_max_tries(cfg.cholesky_max_tries):
+                        gpytorch.settings.cholesky_max_tries(cholesky_max_tries):
                     try:
                         ngd.zero_grad()
-                        adam.zero_grad()
-                        # loss_per_cell shape: [num_cells] — one ELBO per cell
-                        loss_per_cell = -mll(model(bx), by)
-                        # Sum to scalar; VariationalELBO already scales by num_data
-                        loss_scalar = loss_per_cell.sum()
-                        loss_scalar.backward()
+                        if adam:
+                            adam.zero_grad()
+                        loss_per_cell = self._batched_neg_elbo(
+                            model, likelihood, bx, by, n_real
+                        )
+                        (loss_per_cell * n_real).sum().div(n_ref).backward()
                         ngd.step()
-                        adam.step()
+                        if adam:
+                            adam.step()
                         consec_failures = 0
                     except NotPSDError:
                         jitter = min(jitter * 10.0, 1e-1)
@@ -766,30 +823,60 @@ class SVGPDigitalTwin(DTModel):
                             )
                         continue
 
-                with torch.no_grad():
-                    real_counts = bm.sum(dim=1).float()  # [C]
-                    running += loss_per_cell.detach() * real_counts
-                    seen += real_counts
+                running += loss_per_cell.detach()
+                done_steps += 1
 
             for i in range(num_cells):
-                epoch_loss = (running[i] / seen[i].clamp_min(1)).item()
-                all_epoch_losses[i].append(epoch_loss)
+                all_epoch_losses[i].append((running[i] / max(done_steps, 1)).item())
 
             # Early stopping: check all cells have plateaued
             if all(
-                len(losses) > 1 and abs(losses[-1] - losses[-2]) < cfg.stopping_threshold
+                len(losses) > 1 and abs(losses[-1] - losses[-2]) < stopping_threshold
                 for losses in all_epoch_losses
             ):
                 break
 
-        self._models = [model]
-        self._likelihoods = [likelihood]
+        return all_epoch_losses
 
-        max_len = max(len(l) for l in all_epoch_losses)
-        out = np.full((num_cells, max_len), np.nan)
-        for idx, losses in enumerate(all_epoch_losses):
-            out[idx, : len(losses)] = losses
-        return out
+    def _update_multicell(
+        self,
+        train_X: List[torch.Tensor],
+        train_Y: List[torch.Tensor],
+        cfg: SVGPUpdateConfig,
+    ) -> List[np.ndarray]:
+        model, likelihood = self._models[0], self._likelihoods[0]
+        model.train()
+        likelihood.train()
+
+        inducing_param = model.variational_strategy.inducing_points
+        old_inducing_grad = inducing_param.requires_grad
+        if cfg.freeze_inducing:
+            inducing_param.requires_grad_(False)
+        old_hp_grad = []
+        if cfg.freeze_hyperparams:
+            for p in list(model.hyperparameters()) + list(likelihood.parameters()):
+                old_hp_grad.append((p, p.requires_grad))
+                p.requires_grad_(False)
+        try:
+            losses = self._fit_batched(
+                model,
+                likelihood,
+                train_X,
+                train_Y,
+                num_epochs=cfg.num_epochs,
+                batch_size=cfg.batch_size,
+                learning_rate=cfg.learning_rate,
+                ngd_lr=cfg.ngd_lr,
+                stopping_threshold=cfg.stopping_threshold,
+                cholesky_jitter=cfg.cholesky_jitter,
+                cholesky_max_tries=cfg.cholesky_max_tries,
+                seed=0,
+            )
+        finally:
+            inducing_param.requires_grad_(old_inducing_grad)
+            for p, rg in old_hp_grad:
+                p.requires_grad_(rg)
+        return [np.array(cell_losses) for cell_losses in losses]
 
     # ------------------------------------------------------------------
     # Per-cell predict (fallback)
@@ -828,7 +915,16 @@ class SVGPDigitalTwin(DTModel):
             frame[c.RXPOWER_STDDEV_DBM] = std
             pred_means.append(mean)
             pred_stds.append(std)
-        return np.column_stack(pred_means), np.column_stack(pred_stds)
+        return self._stack_padded(pred_means), self._stack_padded(pred_stds)
+
+    @staticmethod
+    def _stack_padded(columns: List[np.ndarray]) -> np.ndarray:
+        """Stack per-cell arrays as columns; shorter cells are padded with NaN."""
+        n_max = max(len(col) for col in columns)
+        out = np.full((n_max, len(columns)), np.nan, dtype=np.result_type(*columns))
+        for idx, col in enumerate(columns):
+            out[: len(col), idx] = col
+        return out
 
     # ------------------------------------------------------------------
     # Batched multi-cell predict
@@ -897,7 +993,7 @@ class SVGPDigitalTwin(DTModel):
             pred_means.append(mean)
             pred_stds.append(std)
 
-        return np.column_stack(pred_means), np.column_stack(pred_stds)
+        return self._stack_padded(pred_means), self._stack_padded(pred_stds)
 
     # ------------------------------------------------------------------
     # Online update (approximate streaming EM)
@@ -917,17 +1013,11 @@ class SVGPDigitalTwin(DTModel):
         model.train()
         likelihood.train()
 
-        # Determine which variational distribution to use
-        if self._multicell_batched:
-            var_dist_params = list(
-                model.variational_strategy._variational_distribution.parameters()
-            )
-            inducing_param = model.variational_strategy.inducing_points
-        else:
-            var_dist_params = list(
-                model.variational_strategy._variational_distribution.parameters()
-            )
-            inducing_param = model.variational_strategy.inducing_points
+        # per-cell models only; the batched model is updated by _update_multicell
+        var_dist_params = list(
+            model.variational_strategy._variational_distribution.parameters()
+        )
+        inducing_param = model.variational_strategy.inducing_points
 
         old_inducing_grad = inducing_param.requires_grad
         if cfg.freeze_inducing:
@@ -1008,6 +1098,13 @@ class SVGPDigitalTwin(DTModel):
             "ymeans": [s.to_dict() for s in self._ymeans],
             "ystds": [s.to_dict() for s in self._ystds],
         }
+
+    @staticmethod
+    def _ard_num_dims(state_dict: Dict) -> Optional[int]:
+        """Lengthscales per feature in a checkpoint; None for a shared lengthscale
+        (checkpoints written before ARD existed)."""
+        dims = state_dict["covar_module.base_kernel.raw_lengthscale"].shape[-1]
+        return dims if dims > 1 else None
 
     @staticmethod
     def _series_list(values: List[Dict]) -> List[pd.Series]:
@@ -1108,7 +1205,9 @@ class SVGPDigitalTwin(DTModel):
             cell_ids = list(blob["cell_ids"])
             num_cells = blob["num_cells"]
             inducing_points = blob["inducing_points"].to(engine.device)
-            model = MultiCellSVGPModel(inducing_points)
+            model = MultiCellSVGPModel(
+                inducing_points, ard_num_dims=cls._ard_num_dims(blob["model_state_dict"])
+            )
             model.load_state_dict(blob["model_state_dict"])
             likelihood = gpytorch.likelihoods.GaussianLikelihood(
                 batch_shape=torch.Size([num_cells])
@@ -1131,7 +1230,10 @@ class SVGPDigitalTwin(DTModel):
                         f"Inducing-point count mismatch on cell {cell['cell_id']}: "
                         f"ckpt={expected}, state_dict={actual}"
                     )
-                model = SVGPGPModel(inducing_points)
+                model = SVGPGPModel(
+                    inducing_points,
+                    ard_num_dims=cls._ard_num_dims(cell["model_state_dict"]),
+                )
                 state_inducing = cell["model_state_dict"][
                     "variational_strategy.inducing_points"
                 ]

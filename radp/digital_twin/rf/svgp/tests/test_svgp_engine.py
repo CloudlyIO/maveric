@@ -115,6 +115,36 @@ class TestPreprocessing:
                 _ue_data(), _site_config().drop(columns=[c.HTX])
             )
 
+    def test_training_preprocess_keeps_row_level_tilt(self):
+        """Measurements taken at different tilts must keep their own tilt (and antenna gain)."""
+        ue = _ue_data()
+        ue[c.CELL_EL_DEG] = [0.0, 4.0, 8.0, 12.0, 16.0, 20.0, 2.0, 6.0] * 2
+        site = _site_config()
+        frames = SVGPDigitalTwin.preprocess_ue_training_data(ue, site)
+        for frame, cell_id in zip(frames, ["cell-a", "cell-b"]):
+            row_tilt = ue.loc[ue[c.CELL_ID] == cell_id, c.CELL_EL_DEG].to_numpy()
+            np.testing.assert_array_equal(frame[c.CELL_EL_DEG].to_numpy(), row_tilt)
+            cell = site.set_index(c.CELL_ID).loc[cell_id]
+            expected_gain = GISTools.get_antenna_gain(
+                cell[c.HTX], cell[c.HRX], frame[c.LOG_DISTANCE].to_numpy(), row_tilt
+            )
+            np.testing.assert_allclose(frame[c.ANTENNA_GAIN].to_numpy(), expected_gain)
+
+    def test_training_preprocess_fills_missing_row_tilt_from_topology(self):
+        ue = _ue_data()
+        ue[c.CELL_EL_DEG] = [np.nan, 4.0, np.nan, 12.0, 16.0, 20.0, 2.0, 6.0] * 2
+        frames = SVGPDigitalTwin.preprocess_ue_training_data(ue, _site_config())
+        assert frames[0][c.CELL_EL_DEG].tolist()[:3] == [2.0, 4.0, 2.0]
+        assert frames[1][c.CELL_EL_DEG].tolist()[:3] == [3.0, 4.0, 3.0]
+
+    def test_prediction_frames_use_configured_tilt(self):
+        template = pd.DataFrame(
+            {c.LOC_X: [139.699058], c.LOC_Y: [35.644327], c.CELL_EL_DEG: [99.0]}
+        )
+        frames = SVGPDigitalTwin.create_prediction_frames(_site_config(), template)
+        assert frames["cell-a"][c.CELL_EL_DEG].tolist() == [2.0]
+        assert frames["cell-b"][c.CELL_EL_DEG].tolist() == [3.0]
+
 
 class TestPreprocessingVectorized:
     """Vectorized GIS helpers must be numerically identical to the scalar versions."""
@@ -346,6 +376,105 @@ class TestSVGPEndToEndMultiCell:
         assert np.isfinite(means).all()
 
 
+class TestUnequalPredictionFrames:
+    @pytest.mark.parametrize("multicell_batched", [True, False])
+    def test_shorter_frames_are_nan_padded(self, multicell_batched):
+        frames = _training_frames()
+        engine = SVGPDigitalTwin(device="cpu")
+        engine.train(
+            frames,
+            [c.LOG_DISTANCE, c.RELATIVE_BEARING, c.ANTENNA_GAIN],
+            [c.RXPOWER_DBM],
+            _small_config(multicell_batched=multicell_batched),
+        )
+        pf = [frames[0].head(3).copy(), frames[1].head(2).copy()]
+        means, stds = engine.predict(pf)
+        assert means.shape == (3, 2)
+        assert stds.shape == (3, 2)
+        assert np.isfinite(means[:, 0]).all()
+        assert np.isfinite(means[:2, 1]).all()
+        assert np.isnan(means[2, 1]) and np.isnan(stds[2, 1])
+        np.testing.assert_array_equal(pf[1][c.RXPOWER_DBM].to_numpy(), means[:2, 1])
+
+
+# ---------------------------------------------------------------------------
+# Batched ELBO (multicell training / update objective)
+# ---------------------------------------------------------------------------
+
+class TestBatchedNegELBO:
+    def _model_and_batch(self):
+        torch.manual_seed(0)
+        model = MultiCellSVGPModel(torch.randn(2, 4, 3))
+        likelihood = gpytorch.likelihoods.GaussianLikelihood(batch_shape=torch.Size([2]))
+        model.train()
+        likelihood.train()
+        return model, likelihood, torch.randn(2, 6, 3), torch.randn(2, 6)
+
+    def test_matches_gpytorch_elbo_for_equal_cell_sizes(self):
+        model, likelihood, bx, by = self._model_and_batch()
+        ours = SVGPDigitalTwin._batched_neg_elbo(
+            model, likelihood, bx, by, torch.tensor([50.0, 50.0])
+        )
+        reference = -gpytorch.mlls.VariationalELBO(likelihood, model, num_data=50)(
+            model(bx), by
+        )
+        torch.testing.assert_close(ours, reference)
+
+    def test_kl_is_scaled_by_each_cells_own_size(self):
+        """A 30-row cell and a 3000-row cell must each get their own KL weight."""
+        model, likelihood, bx, by = self._model_and_batch()
+        ours = SVGPDigitalTwin._batched_neg_elbo(
+            model, likelihood, bx, by, torch.tensor([30.0, 3000.0])
+        )
+        for cell, n in [(0, 30), (1, 3000)]:
+            reference = -gpytorch.mlls.VariationalELBO(likelihood, model, num_data=n)(
+                model(bx), by
+            )
+            torch.testing.assert_close(ours[cell], reference[cell])
+
+
+# ---------------------------------------------------------------------------
+# ARD kernel
+# ---------------------------------------------------------------------------
+
+class TestARD:
+    X_COLS = [c.LOG_DISTANCE, c.RELATIVE_BEARING, c.ANTENNA_GAIN]
+
+    def _engine(self, multicell_batched, ard=None):
+        cfg = _small_config(seed=5, multicell_batched=multicell_batched)
+        if ard is not None:
+            cfg.ard = ard
+        engine = SVGPDigitalTwin(device="cpu")
+        engine.train(_training_frames(), self.X_COLS, [c.RXPOWER_DBM], cfg)
+        return engine
+
+    @pytest.mark.parametrize("multicell_batched", [True, False])
+    def test_one_lengthscale_per_feature_by_default(self, multicell_batched):
+        engine = self._engine(multicell_batched)
+        for model in engine._models:
+            assert model.covar_module.base_kernel.lengthscale.shape[-1] == len(self.X_COLS)
+
+    @pytest.mark.parametrize("multicell_batched", [True, False])
+    def test_ard_can_be_disabled(self, multicell_batched):
+        engine = self._engine(multicell_batched, ard=False)
+        for model in engine._models:
+            assert model.covar_module.base_kernel.lengthscale.shape[-1] == 1
+
+    @pytest.mark.parametrize("multicell_batched", [True, False])
+    @pytest.mark.parametrize("ard", [True, False])
+    def test_checkpoints_round_trip_with_and_without_ard(self, multicell_batched, ard):
+        """Checkpoints written before ARD existed (shared lengthscale) must still load."""
+        engine = self._engine(multicell_batched, ard=ard)
+        pf = [f.head(3).copy() for f in _training_frames()]
+        means, _ = engine.predict([f.copy() for f in pf])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "svgp.pt")
+            engine.save(path)
+            loaded = SVGPDigitalTwin.load(path, map_location="cpu")
+        loaded_means, _ = loaded.predict([f.copy() for f in pf])
+        np.testing.assert_allclose(means, loaded_means, rtol=1e-4, atol=1e-4)
+
+
 # ---------------------------------------------------------------------------
 # Train loop internals
 # ---------------------------------------------------------------------------
@@ -556,6 +685,31 @@ class TestOnlineUpdate:
         means_after, _ = engine.predict(pf)
         # Predictions should move (history + new data drives the posterior)
         assert not np.allclose(means_before, means_after, atol=1e-6)
+
+    @pytest.mark.parametrize("multicell_batched", [True, False])
+    def test_update_moves_only_the_cell_whose_data_changed(self, multicell_batched):
+        """Re-feed cell-a its own rows and give cell-b rows shifted +20 dB."""
+        frames = _training_frames()
+        engine = SVGPDigitalTwin(device="cpu")
+        engine.train(
+            frames,
+            [c.LOG_DISTANCE, c.RELATIVE_BEARING, c.ANTENNA_GAIN],
+            [c.RXPOWER_DBM],
+            _small_config(seed=3, multicell_batched=multicell_batched),
+        )
+        pf = [f.head(4).copy() for f in frames]
+        means_before, _ = engine.predict([f.copy() for f in pf])
+
+        update_frames = [f.copy() for f in frames]
+        update_frames[1][c.RXPOWER_DBM] += 20.0
+        losses = engine.update_trained_gpmodel(
+            update_frames, SVGPUpdateConfig(num_epochs=5, batch_size=4)
+        )
+        assert losses.shape[0] == 2
+        means_after, _ = engine.predict(pf)
+        shift = (means_after - means_before).mean(axis=0)
+        assert shift[1] > 1.0
+        assert abs(shift[0]) < abs(shift[1]) / 4
 
 
 # ---------------------------------------------------------------------------
