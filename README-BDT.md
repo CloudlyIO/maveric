@@ -23,7 +23,7 @@
 
 The **Bayesian Digital Twin (BDT)** is RADP's RF digital twin. It learns how strongly each cell is received at any location, under any antenna tilt, from measured or simulated data. It then answers what-if questions such as *"what would coverage look like if cell 3 were tilted to 12°?"* without touching the live network.
 
-Every prediction comes with its own uncertainty (σ), and new measurements can be folded in within a fraction of a second, without retraining. The BDT is the RF engine behind the RADP Train and Simulation APIs and behind the CCO, MRO, Energy Savings and Load Balancing applications.
+Every prediction comes with its own uncertainty (σ), and new measurements can be folded in within a fraction of a second, without retraining. The BDT is the RF engine behind the RADP Train and Simulation APIs and behind the CCO, MRO, Energy Savings and Load Balancing applications. For training sets too large for an exact GP, see the sparse [SVGP twin](README-SVGP.md).
 
 ---
 
@@ -318,8 +318,9 @@ Measured in [notebooks/bayesian_digital_twin.ipynb](notebooks/bayesian_digital_t
 | Best-server agreement (locations reached by ≥2 cells) | 98.3% |
 | Truth inside ±1σ / ±2σ (nominal 68% / 95%) | 76% / 98% |
 | Training time | about 5 s per cell, 100 iterations |
-| Inference | about 47 ms per 1,000 rows |
+| Inference | about 50 ms per 1,000 rows on the first call, which builds the posterior cache; about 7 ms after |
 | Fantasy update vs full retrain (400 new rows) | 0.15 s vs 6.1 s, same accuracy |
+| Error on a tilt it was trained on, before → after that update | 0.57 → 0.55 dB: the update does not forget |
 | Saved model map, 5 cells | 0.25 MB |
 
 **Guidance that follows from those runs:**
@@ -378,10 +379,16 @@ far = twin.support_ratio(std) > BayesianDigitalTwin.OUT_OF_SUPPORT_RATIO  # bool
 - Held-out accuracy, error and σ maps, calibration
 - Training budget vs calibration
 - Tilt what-if sweeps and network coverage and best-server per tilt
-- Leave-one-tilt-out, learning curve, fantasy update vs retrain
+- Leave-one-tilt-out, learning curve, fantasy update vs retrain, and whether the update forgets
 - Pickle round-trip and a final scorecard
 
 **When to Use:** Learning how the BDT works, judging whether it fits your use case, or as a template for evaluating a twin on your own data.
+
+---
+
+### [notebooks/svgp_digital_twin.ipynb](notebooks/svgp_digital_twin.ipynb)
+
+**Purpose:** The same walkthrough for the sparse SVGP twin, side by side with the BDT on identical data. See [README-SVGP.md](README-SVGP.md).
 
 ---
 
