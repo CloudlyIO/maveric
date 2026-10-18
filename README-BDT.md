@@ -109,7 +109,7 @@ radp/digital_twin/utils/gis_tools.py              # log-distance and relative-be
 radp/example_bayesian_engine_driver_script.py     # minimal in-memory train/predict script
 services/training/training_driver.py              # RADP Train API worker
 services/rf_prediction/rf_prediction_driver.py    # RADP RF prediction worker
-notebooks/bdt_from_scratch.ipynb                  # end-to-end walkthrough with KPIs and visuals
+notebooks/bayesian_digital_twin.ipynb             # end-to-end walkthrough with KPIs and visuals
 notebooks/data/sim_data.zip                       # 5-run tilt sweep (4°-16°), 5 cells
 ```
 
@@ -183,7 +183,7 @@ print(f"MAE on the unseen tilt: {abs(mean[0] - test.cell_rxpwr_dbm).mean():.2f} 
 MAE on the unseen tilt: 0.77 dB, mean σ 1.20 dB
 ```
 
-For the full network, with maps, calibration and network KPIs, run [notebooks/bdt_from_scratch.ipynb](notebooks/bdt_from_scratch.ipynb).
+For the full network, with maps, calibration and network KPIs, run [notebooks/bayesian_digital_twin.ipynb](notebooks/bayesian_digital_twin.ipynb).
 
 ---
 
@@ -307,7 +307,7 @@ RF prediction then runs as a stage of the Simulation API with `"rf_prediction": 
 
 # **8. Model Behaviour: What to Expect**
 
-Measured in [notebooks/bdt_from_scratch.ipynb](notebooks/bdt_from_scratch.ipynb) on the bundled tilt sweep. The setup: 5 cells, trained on a 20% sample of the 4°, 7°, 13° and 16° runs (about 2,500 rows per cell) and tested on every row of the unseen 10° run. It ran on a laptop CPU with gpytorch 1.11. Expect different numbers on your own data; the patterns are what carry over.
+Measured in [notebooks/bayesian_digital_twin.ipynb](notebooks/bayesian_digital_twin.ipynb) on the bundled tilt sweep. The setup: 5 cells, trained on a 20% sample of the 4°, 7°, 13° and 16° runs (about 2,500 rows per cell) and tested on every row of the unseen 10° run. It ran on a laptop CPU with gpytorch 1.11. Expect different numbers on your own data; the patterns are what carry over.
 
 | KPI | Value |
 |---|---|
@@ -365,7 +365,7 @@ far = twin.support_ratio(std) > BayesianDigitalTwin.OUT_OF_SUPPORT_RATIO  # bool
 
 # **9. Related Notebooks**
 
-### [notebooks/bdt_from_scratch.ipynb](notebooks/bdt_from_scratch.ipynb)
+### [notebooks/bayesian_digital_twin.ipynb](notebooks/bayesian_digital_twin.ipynb)
 
 **Purpose:** End-to-end BDT walkthrough with KPIs and visuals. It reads `sim_data.zip` directly and needs no `radp_library`, plotly or ffmpeg. It runs in 3–5 minutes on a CPU.
 
