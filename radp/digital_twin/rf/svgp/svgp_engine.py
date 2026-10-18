@@ -1121,7 +1121,8 @@ class SVGPDigitalTwin(DTModel):
                 "schema_version": SCHEMA_VERSION,
                 "model_type": DTModelType.SVGP.value,
                 "variant": "multicell_batched",
-                "torch_version": torch.__version__,
+                # str: torch.load's weights_only mode rejects a TorchVersion object
+                "torch_version": str(torch.__version__),
                 "gpytorch_version": gpytorch.__version__,
                 "norm_method": self._norm_method.value,
                 "x_columns": self._x_columns,
@@ -1164,7 +1165,7 @@ class SVGPDigitalTwin(DTModel):
                 "schema_version": _SCHEMA_VERSION_PERCELL,
                 "model_type": DTModelType.SVGP.value,
                 "variant": "percell",
-                "torch_version": torch.__version__,
+                "torch_version": str(torch.__version__),
                 "gpytorch_version": gpytorch.__version__,
                 "norm_method": self._norm_method.value,
                 "x_columns": self._x_columns,
@@ -1174,11 +1175,22 @@ class SVGPDigitalTwin(DTModel):
             }
         torch.save(blob, path)
 
+    @staticmethod
+    def _load_checkpoint(path: str, map_location: str) -> Dict:
+        """torch.load in weights_only mode, the default from torch 2.6. Checkpoints written
+        before torch_version was saved as a str hold a TorchVersion, so that one class is
+        allowlisted."""
+        safe_globals = getattr(torch.serialization, "safe_globals", None)
+        if safe_globals is None:  # torch < 2.5 has no allowlist and does not need one
+            return torch.load(path, map_location=map_location)
+        with safe_globals([torch.torch_version.TorchVersion]):
+            return torch.load(path, map_location=map_location, weights_only=True)
+
     @classmethod
     def load(
         cls, path: str, *, map_location: Optional[str] = None
     ) -> "SVGPDigitalTwin":
-        blob = torch.load(path, map_location=map_location or "cpu")
+        blob = cls._load_checkpoint(path, map_location or "cpu")
         version = blob.get("schema_version", 1)
         if version not in (1, 2):
             raise ValueError(f"Unsupported schema_version {version}")

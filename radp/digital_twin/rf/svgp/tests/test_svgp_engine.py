@@ -755,6 +755,24 @@ class TestSVGPSaveLoad:
 
         np.testing.assert_allclose(means, loaded_means, rtol=1e-4, atol=1e-4)
 
+    def test_loads_checkpoint_with_torch_version_object(self):
+        # checkpoints written before torch_version was saved as a str hold a TorchVersion,
+        # which torch.load's weights_only default (torch >= 2.6) rejects unless allowlisted
+        engine, frames = self._train_engine(multicell_batched=True)
+        pf = [f.head(3).copy() for f in frames]
+        means, _ = engine.predict([f.copy() for f in pf])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "old.pt")
+            engine.save(path)
+            blob = torch.load(path, map_location="cpu")
+            blob["torch_version"] = torch.torch_version.TorchVersion(torch.__version__)
+            torch.save(blob, path)
+            loaded = SVGPDigitalTwin.load(path, map_location="cpu")
+            loaded_means, _ = loaded.predict([f.copy() for f in pf])
+
+        np.testing.assert_allclose(means, loaded_means, rtol=1e-4, atol=1e-4)
+
     def test_wrong_model_type_raises(self):
         engine, _ = self._train_engine(multicell_batched=False)
         with tempfile.TemporaryDirectory() as tmpdir:
