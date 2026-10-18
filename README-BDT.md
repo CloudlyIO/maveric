@@ -76,12 +76,13 @@ Defined in [bayesian_engine.py](radp/digital_twin/rf/bayesian/bayesian_engine.py
 
 | Method | What it does |
 |---|---|
-| `BayesianDigitalTwin(data_in, x_columns, y_columns, norm_method=NormMethod.MINMAX, x_max=None, x_min=None, ard=True)` | Builds the GP for the cell DataFrame(s) in `data_in` and computes normalisation statistics. `x_min`/`x_max` override the observed ranges per column. Does **not** train. |
+| `BayesianDigitalTwin(data_in, x_columns, y_columns, norm_method=NormMethod.MINMAX, x_max=None, x_min=None, ard=True, prior_mean="constant", antenna_height_diff_m=18.0)` | Builds the GP for the cell DataFrame(s) in `data_in` and computes normalisation statistics. `x_min`/`x_max` override the observed ranges per column. `prior_mean="antenna"` swaps the constant prior mean for path loss plus the 3GPP antenna patterns (see [Section 8](#where-the-twin-is-biased)). Does **not** train. |
 | `preprocess_ue_training_data(ue_training_data_df, topology_df)` *(static)* | Adds the cell's location, azimuth and frequency, plus `log_distance` and `relative_bearing`, to every UE row. Returns `{cell_id: DataFrame}`. |
 | `preprocess_ue_prediction_data(ue_data_df, config_df, topology_df)` *(static)* | Same for prediction. Tilt comes from `config_df`. `ue_data_df` needs one row per (location, cell). |
 | `create_prediction_frames(site_config_df, prediction_frame_template)` *(static)* | Builds per-cell prediction frames for a grid of `loc_x`/`loc_y` points. |
 | `train_distributed_gpmodel(maxiter=100, lr=0.05, stopping_threshold=1e-4)` | Fits the hyperparameters. Returns the loss per iteration, zero-padded after an early stop. |
-| `predict_distributed_gpmodel(prediction_dfs)` | Returns `(mean, std)` arrays of shape `[num_cells, n]` in dBm. Also writes `rxpower_dbm` and `rxpower_stddev_dbm` into the frames you pass in. |
+| `predict_distributed_gpmodel(prediction_dfs)` | Returns `(mean, std)` arrays of shape `[num_cells, n]` in dBm. Also writes `rxpower_dbm` and `rxpower_stddev_dbm` into the frames you pass in. Logs one warning per twin when many rows are far from the training data. |
+| `support_ratio(pred_stds)` / `prior_stddev_dbm()` | How little each prediction is informed by the training data: about 0 among training rows, about 1 far from all of them, or everywhere for a twin that learned little (e.g. a handful of rows). Rows above `OUT_OF_SUPPORT_RATIO` (0.25) are out of support, and their means fall back toward the training mean. |
 | `update_trained_gpmodel(data_in)` | Fantasy update with new rows. Rebuilds exact posterior caches first, so it is stable above 800 rows and needs no prior prediction. |
 | `save_model_map_to_pickle(path, model_map)` / `load_model_map_from_pickle(path)` *(static)* | Persists the `{cell_id: twin}` map. GPyTorch's posterior caches are left out of the file and rebuilt on demand; in-memory twins keep theirs. |
 
@@ -250,6 +251,8 @@ for cell_id, rows in per_cell_prediction.items():
     mean, std = twins[cell_id].predict_distributed_gpmodel([rows])  # also adds rxpower_dbm / rxpower_stddev_dbm to rows
 ```
 
+With the 5 sample rows per cell, expect one "barely informed by the training data" warning per cell here. Five rows are too few to learn from: each twin puts them down to noise and predicts close to its training mean everywhere (see [Section 8](#where-the-twin-is-biased)).
+
 To evaluate a different tilt, change `cell_el_deg` in `config` and predict again; no retraining is needed. Network RSRP at a location is the maximum of the per-cell predictions there, and the best server is the cell that achieves it.
 
 ---
@@ -326,8 +329,37 @@ Measured in [notebooks/bdt_from_scratch.ipynb](notebooks/bdt_from_scratch.ipynb)
 - **Sample size saturates early.** About 600–1,200 rows per cell (5–10% of a run) matched the accuracy of 2,500. Above about 600 rows, training time roughly quadruples each time the rows double.
 - **The learned lengthscales are interpretable.** In physical units the model decorrelates over about 30° of bearing (the antenna lobe), ×2.7–5.5 in distance, and 7–17° of tilt. Tilt being the smoothest input is what lets the twin interpolate between configurations.
 - **Expect the largest errors near the masts.** Within about 100 m of a site, errors spread to ±10 dB; elsewhere the middle 50% of errors stay within about ±1.5 dB.
-- **Treat σ as a risk ranking, not a guarantee.** It flags the masts well but under-covers systematic interpolation error. σ from the default fast-variance path also varies by up to about 1.4 dB between two cache rebuilds of the same model.
+- **Treat σ as a risk ranking, not a guarantee.** It flags the masts well but under-covers systematic interpolation error. σ from the default fast-variance path also varies by up to about 1.4 dB between two cache rebuilds of the same model. It runs wider than the exact posterior σ: about 1.1× in this setup, and up to 2× with 1,200 rows per cell.
 - **Update continuously, retrain on a schedule.** Fantasy updates freeze the hyperparameters; retraining re-learns them. On the tilt sweep, retraining added no accuracy at about 40× the cost.
+
+## Where the Twin Is Biased
+
+A prediction at a point the twin never saw is **not** biased by itself. Bias comes from where that point sits relative to the training data, and from how the training data was chosen. Signed bias is the mean of prediction minus truth.
+
+**Setup:** the bundled tilt sweep, 5 cells, 1,200 training rows per cell, seed 0. Each test set holds out what its row describes. The 10° row also reproduces in the §8 setup above (−0.48 dB).
+
+| Prediction point | Bias, default twin | With `prior_mean="antenna"` |
+|---|---|---|
+| Unseen location inside the measured footprint | −0.03 dB | 0.00 dB |
+| Unseen tilt between measured tilts (10°) | −0.40 dB, all cells low | 0.00 dB |
+| Tilt beyond the measured range (16° from 4–13°) | −1.71 dB | +0.27 dB |
+| Beyond the measured distance (trained ≤ 400 m, tested 400–800 m) | **+2.85 dB** | +0.85 dB |
+| Near the mast, with no training rows within 150 m | +1.75 dB | +1.45 dB |
+| Behind the antenna, with no training rows at 120–240° | −3.3 to +8.3 dB per cell (unreliable) | −2.5 to +7.6 dB per cell |
+| Training data with every reading below −110 dBm dropped | **+5.65 dB**, +8.9 dB where truth < −110 dBm | +1.65 dB |
+
+What drives it:
+
+- **Far from all training data, the default twin falls back to the training-mean RSRP.** Trained on a full 0–800 m disc, it predicts −112.6 dBm at 5 km along boresight. That is the training mean; a log-distance fit to the same data gives −125.4 dBm. Its σ grows to about 16 dB there, so `support_ratio` catches it (AUROC 0.90 for errors above 3 dB on these runs). No caller reads σ by default.
+- **Training data selected on RSRP biases the twin upward.** That covers dropping weak or undetected readings, keeping only the strongest samples, and some measurement-report setups. Filling non-detections in *at* the floor value makes it worse (+8.3 dB), because the floor is an upper bound on the true value. MRO's fantasy update used to keep the 500 strongest samples. With 4 dB of measurement noise that biased the updated twin by +1.1 dB, against +0.1 dB for a random 500, so it now takes a random 500.
+- **`prior_mean="antenna"` shrinks the extrapolation bias,** but it has only been checked on simulated data. The simulator likely uses the same 3GPP-style pattern, so expect a smaller gain on measured data. It also tightened ±2σ near the mast too far (94% → 75%).
+
+Flag the predictions to treat with care:
+
+```python
+mean, std = twin.predict_distributed_gpmodel([frame])
+far = twin.support_ratio(std) > BayesianDigitalTwin.OUT_OF_SUPPORT_RATIO  # boolean, shape [num_cells, n]
+```
 
 ---
 
@@ -378,6 +410,8 @@ The suite covers:
 - the ARD kernel
 - fantasy updates against an independent exact posterior: single, chained, without a prior predict, and after a save and reload
 - save/load: file size after predict and after update, in-memory caches surviving a save, and identical predictions after reload
+- `support_ratio`: near 0 among training rows (also for a noisy twin), near 1 far from them, and one warning per twin
+- `prior_mean="antenna"`: extrapolation beyond the trained distance, buffers that follow the model across devices, update and reload, and twins without a tilt column
 
 ---
 

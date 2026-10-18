@@ -220,8 +220,9 @@ class MobilityRobustnessOptimization(ABC):
         Updates the Bayesian Digital Twin (BDT) model for a specific cell.
 
         Deduplicates samples using 'log_distance' and 'relative_bearing'. If more than 500
-        samples remain, subsamples the 500 strongest signals before updating the trained
-        GP model with the processed data.
+        samples remain, takes a random 500 before updating the trained GP model with the
+        processed data. Taking the strongest 500 instead would select on noisy rx power and
+        bias the updated twin upward.
 
         +---------+----------+-----------+----------------+--------------+-------------------+
         | cell_id | latitude | longitude | cell_rxpwr_dbm | log_distance | relative_bearing  |
@@ -238,9 +239,9 @@ class MobilityRobustnessOptimization(ABC):
         # Remove near-duplicates in feature space
         df = df.drop_duplicates(subset=["log_distance", "relative_bearing"])
 
-        # Subsample to at most 500 strongest samples per cell
+        # Subsample to at most 500 random samples per cell
         if df.shape[0] > 500:
-            df = get_percell_data(data_in=df, choose_strongest_samples_percell=True, n_samples=500,)[
+            df = get_percell_data(data_in=df, choose_strongest_samples_percell=False, n_samples=500,)[
                 0
             ][0]
 

@@ -367,7 +367,8 @@ class TestMobilityRobustnessOptimization(unittest.TestCase):
         ):
             # After dedup, there should be exactly one fewer row (501)
             assert len(data_in) == 501, f"Expected 501 rows after dedup, got {len(data_in)}"
-            assert choose_strongest_samples_percell is True, "Expected strongest sampling for > 500 rows"
+            # picking the strongest samples selects on noisy rx power and biases the updated twin upward
+            assert choose_strongest_samples_percell is False, "Expected random sampling for > 500 rows"
             assert n_samples == 500, f"Expected n_samples=500, got {n_samples}"
             called["ok"] = True
             # Return the expected structure: (List[pd.DataFrame], List[pd.DataFrame])
@@ -381,4 +382,4 @@ class TestMobilityRobustnessOptimization(unittest.TestCase):
             mro._update("cell_1", df_large)
 
         # Assert
-        self.assertTrue(called["ok"], "Expected get_percell_data to be invoked with strongest sampling and dedup")
+        self.assertTrue(called["ok"], "Expected get_percell_data to be invoked with random sampling and dedup")

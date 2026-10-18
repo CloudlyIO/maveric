@@ -52,7 +52,58 @@ class ExactGPModel(gpytorch.models.ExactGP):
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
 
+class AntennaPatternMean(gpytorch.means.Mean):
+    """Prior mean from log-distance path loss and the 3GPP TR 36.814 antenna patterns:
+    constant + w1 * log_distance + w2 * A_V(distance, tilt) + w3 * A_H(bearing), weights learned in training.
+
+    Far from its training data a GP falls back to its prior mean, so with a constant one the twin
+    predicts the training-mean Rx power at any distance. This one keeps falling with distance and
+    follows the antenna pattern. Inputs arrive normalized; `lo` and `scale` undo that per cell.
+    """
+
+    def __init__(
+        self,
+        lo: torch.Tensor,
+        scale: torch.Tensor,
+        x_columns: List[str],
+        height_diff_m: float,
+        batch_shape: torch.Size,
+    ):
+        super().__init__()
+        self.distance_idx = x_columns.index(constants.LOG_DISTANCE)
+        self.bearing_idx = x_columns.index(constants.RELATIVE_BEARING)
+        # without a tilt column (e.g. MRO's twins) the vertical pattern assumes 0 deg
+        self.tilt_idx = x_columns.index(constants.CELL_EL_DEG) if constants.CELL_EL_DEG in x_columns else None
+        # buffers, so model.cuda() / model.to(device) move them with the model
+        self.register_buffer("lo", lo)
+        self.register_buffer("scale", scale)
+        self.register_buffer("height_diff_m", torch.tensor(float(height_diff_m)))
+        # zero weights: training starts from a constant mean
+        self.register_parameter("weights", torch.nn.Parameter(torch.zeros(*batch_shape, 3)))
+        self.register_parameter("constant", torch.nn.Parameter(torch.zeros(*batch_shape, 1)))
+
+    def forward(self, x):
+        raw = x * self.scale + self.lo
+        log_distance = raw[..., self.distance_idx]
+        tilt = raw[..., self.tilt_idx] if self.tilt_idx is not None else torch.zeros_like(log_distance)
+        # 3GPP TR 36.814 patterns: vertical 10 deg beamwidth / 20 dB side lobes, horizontal 65 deg / 25 dB
+        elevation = torch.rad2deg(torch.atan(self.height_diff_m / torch.exp(log_distance)))
+        vertical = -torch.clamp(12 * ((elevation - tilt) / 10.0) ** 2, max=20.0)
+        bearing = torch.remainder(raw[..., self.bearing_idx] + 180.0, 360.0) - 180.0
+        horizontal = -torch.clamp(12 * (bearing / 65.0) ** 2, max=25.0)
+        features = torch.stack([x[..., self.distance_idx], vertical / 10.0, horizontal / 10.0], dim=-1)
+        return (features * self.weights.unsqueeze(-2)).sum(-1) + self.constant
+
+
 class BayesianDigitalTwin:
+    # A prediction whose noise-free std exceeds this fraction of the prior std is out of the training
+    # support: far from every training row, its mean falls back toward the training mean. Chosen and
+    # scored on the same runs of the bundled tilt sweep (AUROC 0.90 for |error| > 3 dB, 94% recall,
+    # 3.4% flagged inside the footprint), using the fast_pred_var std; re-tune it if that std is made exact.
+    OUT_OF_SUPPORT_RATIO = 0.25
+    # predict warns, once per twin, when more than this fraction of a cell's rows are out of support
+    OUT_OF_SUPPORT_WARN_FRACTION = 0.1
+
     def __init__(
         self,
         data_in: List[pd.DataFrame],
@@ -62,6 +113,8 @@ class BayesianDigitalTwin:
         x_max: Optional[Dict[str, float]] = None,
         x_min: Optional[Dict[str, float]] = None,
         ard: bool = True,
+        prior_mean: str = "constant",
+        antenna_height_diff_m: float = 18.0,
     ):
         """
         `data_in` is a list of Pandas dataframes, where each one corresponds to
@@ -80,7 +133,20 @@ class BayesianDigitalTwin:
 
         `ard` gives each x column its own kernel lengthscale (default). Set it to
         False for the original single shared lengthscale.
+
+        `prior_mean` is what predictions fall back to far from the training data. "constant"
+        (default) falls back to the training-mean Rx power at any distance; "antenna" uses
+        `AntennaPatternMean`, which needs `log_distance` and `relative_bearing` in `x_columns` and
+        the antenna height above the UE in `antenna_height_diff_m` (hTx - hRx). "antenna" has only
+        been validated on simulated data.
         """
+        if prior_mean not in ("constant", "antenna"):
+            raise ValueError(f"prior_mean must be 'constant' or 'antenna', got {prior_mean!r}")
+        if prior_mean == "antenna" and not {constants.LOG_DISTANCE, constants.RELATIVE_BEARING} <= set(x_columns):
+            raise ValueError(
+                f"prior_mean='antenna' needs {constants.LOG_DISTANCE} and {constants.RELATIVE_BEARING} in x_columns"
+            )
+
         self.is_cuda = False
         if torch.cuda.is_available():
             torch.cuda.set_device(0)
@@ -134,6 +200,28 @@ class BayesianDigitalTwin:
             train_Y,
             likelihood,
             ard_num_dims=self.num_features if ard else None,
+        )
+        if prior_mean == "antenna":
+            self.model.mean_module = self._antenna_pattern_mean(antenna_height_diff_m)
+
+    def _antenna_pattern_mean(self, height_diff_m: float) -> AntennaPatternMean:
+        # the per-cell affine map from normalized inputs back to raw units
+        if self.norm_method == NormMethod.MINMAX:
+            lo = [self.xmin[m] for m in range(self.num_cells)]
+            scale = [self.xmax[m] - self.xmin[m] for m in range(self.num_cells)]
+        else:
+            lo, scale = self.xmeans, self.xstds
+
+        def as_tensor(per_cell):
+            values = np.stack([s.astype(float).values for s in per_cell])
+            return torch.tensor(values, dtype=torch.float32).unsqueeze(-2)  # [num_cells, 1, num_features]
+
+        return AntennaPatternMean(
+            as_tensor(lo),
+            as_tensor(scale),
+            self.x_columns,
+            height_diff_m,
+            self.model.mean_module.batch_shape,
         )
 
     def _create_training_tensors(
@@ -627,4 +715,57 @@ class BayesianDigitalTwin:
             prediction_dfs[idx][constants.RXPOWER_DBM] = pred_means[idx]
             prediction_dfs[idx][constants.RXPOWER_STDDEV_DBM] = pred_stds[idx]
 
+        self._warn_if_out_of_support(pred_stds)
+
         return pred_means, pred_stds
+
+    def _ystds_dbm(self) -> np.ndarray:
+        return np.asarray(self.ystds, dtype=float).reshape(-1)
+
+    def prior_stddev_dbm(self) -> np.ndarray:
+        """Prior std of the noise-free Rx power per cell, in dBm.
+
+        Far from all training data the predictive std of the underlying signal grows to this value,
+        and the predictive mean falls back toward the training mean.
+        """
+        outputscale = self.model.covar_module.outputscale.detach().cpu().numpy().reshape(-1)
+        return np.sqrt(outputscale) * self._ystds_dbm()
+
+    def support_ratio(self, pred_stds: np.ndarray) -> np.ndarray:
+        """How far each prediction is from the training data, from the stds `predict_distributed_gpmodel` returns.
+
+        The ratio of the noise-free predictive std to `prior_stddev_dbm`, shaped like `pred_stds`:
+        near 0 among training rows, near 1 far from all of them. Removing the observation noise keeps a
+        noisy twin's in-support predictions near 0. Rows above `OUT_OF_SUPPORT_RATIO` are out of support.
+        A twin that put almost all of its training variance into the noise (e.g. a handful of rows)
+        reads near 1 everywhere, rightly: it predicts close to the training mean everywhere.
+        """
+        noise_var = self.model.likelihood.noise.detach().cpu().numpy().reshape(-1) * self._ystds_dbm() ** 2
+        latent_var = np.clip(np.asarray(pred_stds) ** 2 - noise_var[:, None], 0, None)
+        return np.sqrt(latent_var) / self.prior_stddev_dbm()[:, None]
+
+    def __getstate__(self):
+        # the once-per-twin support warning is per process; a reloaded twin warns again
+        state = self.__dict__.copy()
+        state.pop("_support_warned", None)
+        return state
+
+    def _warn_if_out_of_support(self, pred_stds: np.ndarray) -> None:
+        # once per twin: callers such as MRO predict once per tick and cell
+        if getattr(self, "_support_warned", False):
+            return
+        out_of_support = (self.support_ratio(pred_stds) > self.OUT_OF_SUPPORT_RATIO).mean(axis=1)
+        flagged = out_of_support > self.OUT_OF_SUPPORT_WARN_FRACTION
+        if not flagged.any():
+            return
+        cells = ", ".join(
+            f"{cell_id} ({fraction:.0%})"
+            for cell_id, fraction, is_flagged in zip(self.cell_ids, out_of_support, flagged)
+            if is_flagged
+        )
+        logger.warning(
+            f"Predictions barely informed by the training data for cell(s) {cells}, because they are "
+            "far from it or the twin learned little from it: their means fall back toward the training "
+            f"mean. Use support_ratio() to find them (> {self.OUT_OF_SUPPORT_RATIO}). Logged once per twin."
+        )
+        self._support_warned = True

@@ -13,6 +13,7 @@ import os
 import tempfile
 import unittest
 
+import gpytorch
 import numpy as np
 import pandas as pd
 import torch
@@ -524,3 +525,183 @@ class TestSaveModelMap(unittest.TestCase):
         reloaded = self._save_and_reload()
 
         np.testing.assert_allclose(self._predicted_mean(reloaded), expected, atol=1e-4)
+
+
+class _WarningRecorder(logging.Handler):
+    def __init__(self):
+        super().__init__(level=logging.WARNING)
+        self.records = []
+
+    def emit(self, record):
+        self.records.append(record)
+
+
+class TestSupportRatio(unittest.TestCase):
+    """support_ratio must flag predictions far from all training data, where the posterior mean
+    falls back to the training mean, and predict must warn about them once per twin."""
+
+    OUTPUTSCALE, LENGTHSCALE, NOISE = 3.6, 0.6, 0.005
+
+    def setUp(self):
+        torch.manual_seed(0)
+        self.rng = np.random.default_rng(0)
+        self.train = _smooth_cell_frame(400, self.rng)
+        self.twin = BayesianDigitalTwin([self.train], ["a", "b"], ["y"])
+        self.twin.model.covar_module.outputscale = self.OUTPUTSCALE
+        self.twin.model.covar_module.base_kernel.lengthscale = self.LENGTHSCALE
+        self.twin.model.likelihood.noise = self.NOISE
+        self.inside = _smooth_cell_frame(100, self.rng)
+        self.outside = self.inside.assign(a=self.inside.a + 4, b=self.inside.b + 4)
+
+    def _ratio(self, frame):
+        _, stds = self.twin.predict_distributed_gpmodel([frame.copy()])
+        return self.twin.support_ratio(stds)
+
+    def _record_warnings(self):
+        # other test modules call logging.disable at import time; lift it while recording
+        self.addCleanup(logging.disable, logging.root.manager.disable)
+        logging.disable(logging.NOTSET)
+        recorder = _WarningRecorder()
+        engine_logger = logging.getLogger(BayesianDigitalTwin.__module__)
+        engine_logger.addHandler(recorder)
+        self.addCleanup(engine_logger.removeHandler, recorder)
+        return recorder.records
+
+    def test_prior_stddev_is_the_noise_free_prior_in_dbm(self):
+        expected = np.sqrt(self.OUTPUTSCALE) * self.train["y"].std()
+        np.testing.assert_allclose(self.twin.prior_stddev_dbm(), [expected], rtol=1e-5)
+
+    def test_ratio_is_small_inside_training_data(self):
+        self.assertLess(self._ratio(self.inside).max(), BayesianDigitalTwin.OUT_OF_SUPPORT_RATIO)
+
+    def test_ratio_is_near_one_far_from_training_data(self):
+        self.assertGreater(self._ratio(self.outside).min(), 0.9)
+
+    def test_ratio_ignores_observation_noise(self):
+        # a noisy twin's std never drops below the noise; in-support points must still read as in support
+        self.twin.model.likelihood.noise = 0.5
+
+        self.assertLess(self._ratio(self.inside).max(), BayesianDigitalTwin.OUT_OF_SUPPORT_RATIO)
+
+    def test_predict_warns_once_when_out_of_support(self):
+        records = self._record_warnings()
+
+        for _ in range(3):
+            self.twin.predict_distributed_gpmodel([self.outside.copy()])
+
+        self.assertEqual(len(records), 1)
+        self.assertIn("support_ratio", records[0].getMessage())
+
+    def test_predict_does_not_warn_inside_support(self):
+        records = self._record_warnings()
+
+        self.twin.predict_distributed_gpmodel([self.inside.copy()])
+
+        self.assertEqual(records, [])
+
+    def test_reloaded_twin_warns_again(self):
+        # the once-per-twin flag must not be saved, or twins saved after a prediction load muted
+        records = self._record_warnings()
+        self.twin.predict_distributed_gpmodel([self.outside.copy()])
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = os.path.join(tmp_dir, "model_map.pickle")
+            BayesianDigitalTwin.save_model_map_to_pickle(path, {"Cell1": self.twin})
+            reloaded = BayesianDigitalTwin.load_model_map_from_pickle(path)["Cell1"]
+
+        reloaded.predict_distributed_gpmodel([self.outside.copy()])
+
+        self.assertEqual(len(records), 2)
+
+
+ANTENNA_X_COLUMNS = [constants.LOG_DISTANCE, constants.RELATIVE_BEARING, constants.CELL_EL_DEG]
+
+
+def _antenna_cell_frame(n, rng, min_distance_m, max_distance_m):
+    """Rx power from log-distance path loss plus the 3GPP vertical and horizontal antenna patterns,
+    over a tilt sweep, like the bundled simulator data."""
+    distance = rng.uniform(min_distance_m, max_distance_m, n)
+    bearing = rng.uniform(0, 360, n)
+    tilt = rng.choice([4.0, 7.0, 10.0, 13.0, 16.0], n)
+    elevation = np.degrees(np.arctan(18.0 / distance))
+    vertical = -np.minimum(12 * ((elevation - tilt) / 10) ** 2, 20)
+    phi = (bearing + 180) % 360 - 180
+    horizontal = -np.minimum(12 * (phi / 65) ** 2, 25)
+    return pd.DataFrame(
+        {
+            "cell_id": "Cell1",
+            constants.LOG_DISTANCE: np.log(distance),
+            constants.RELATIVE_BEARING: bearing,
+            constants.CELL_EL_DEG: tilt,
+            "y": -40 - 13 * np.log(distance) + vertical + horizontal + rng.normal(0, 0.3, n),
+        }
+    )
+
+
+class TestAntennaPriorMean(unittest.TestCase):
+    """prior_mean="antenna" must keep the twin's predictions falling with distance beyond the
+    training data, where the default constant prior mean falls back to the training mean."""
+
+    def setUp(self):
+        torch.manual_seed(0)
+        self.rng = np.random.default_rng(0)
+        self.near = _antenna_cell_frame(400, self.rng, 20, 400)
+        self.far = _antenna_cell_frame(200, self.rng, 400, 800)
+
+    def _trained_twin(self, x_columns=ANTENNA_X_COLUMNS, maxiter=100, **kwargs):
+        twin = BayesianDigitalTwin([self.near], x_columns, ["y"], **kwargs)
+        twin.train_distributed_gpmodel(maxiter=maxiter)
+        return twin
+
+    def _far_bias(self, twin):
+        means, _ = twin.predict_distributed_gpmodel([self.far.copy()])
+        return np.mean(np.ravel(means) - self.far["y"].values)
+
+    def test_default_prior_mean_is_constant(self):
+        twin = BayesianDigitalTwin([self.near], ANTENNA_X_COLUMNS, ["y"])
+
+        self.assertIsInstance(twin.model.mean_module, gpytorch.means.ConstantMean)
+
+    def test_antenna_mean_extrapolates_beyond_trained_distance(self):
+        constant_bias = self._far_bias(self._trained_twin())
+        antenna_bias = self._far_bias(self._trained_twin(prior_mean="antenna"))
+
+        self.assertGreater(constant_bias, 1.0)  # the constant prior mean overestimates out there
+        self.assertLess(abs(antenna_bias), abs(constant_bias) / 2)
+
+    def test_normalisation_lives_in_buffers(self):
+        # buffers follow model.cuda() and model.to(device), and travel in the state_dict
+        twin = BayesianDigitalTwin([self.near], ANTENNA_X_COLUMNS, ["y"], prior_mean="antenna")
+
+        buffers = dict(twin.model.mean_module.named_buffers())
+
+        self.assertTrue({"lo", "scale", "height_diff_m"} <= buffers.keys())
+        self.assertIn("mean_module.lo", twin.model.state_dict())
+
+    def test_update_and_reload_keep_predictions(self):
+        twin = self._trained_twin(maxiter=20, prior_mean="antenna")
+        twin.update_trained_gpmodel([_antenna_cell_frame(100, self.rng, 20, 400)])
+        expected, _ = twin.predict_distributed_gpmodel([self.far.copy()])
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = os.path.join(tmp_dir, "model_map.pickle")
+            BayesianDigitalTwin.save_model_map_to_pickle(path, {"Cell1": twin})
+            reloaded = BayesianDigitalTwin.load_model_map_from_pickle(path)["Cell1"]
+
+        actual, _ = reloaded.predict_distributed_gpmodel([self.far.copy()])
+        np.testing.assert_allclose(actual, expected, atol=1e-4)
+
+    def test_antenna_mean_works_without_a_tilt_column(self):
+        # MRO's twins see only distance and bearing
+        twin = self._trained_twin(x_columns=ANTENNA_X_COLUMNS[:2], maxiter=5, prior_mean="antenna")
+
+        means, _ = twin.predict_distributed_gpmodel([self.far.copy()])
+
+        self.assertTrue(np.isfinite(means).all())
+
+    def test_antenna_mean_needs_distance_and_bearing(self):
+        with self.assertRaises(ValueError):
+            BayesianDigitalTwin([self.near], [constants.LOG_DISTANCE, constants.CELL_EL_DEG], ["y"], prior_mean="antenna")
+
+    def test_unknown_prior_mean_is_rejected(self):
+        with self.assertRaises(ValueError):
+            BayesianDigitalTwin([self.near], ANTENNA_X_COLUMNS, ["y"], prior_mean="linear")

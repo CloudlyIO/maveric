@@ -166,7 +166,7 @@ class TrainingDriver:
                 "cell_el_deg": 50,
                 "cell_lat": 90,
                 "cell_lon": 180,
-                "log_distance": 5,  # log(1 + max distance of 50000 meters)
+                "log_distance": 5,  # ln(1 + metres), so 5 is ~147 m; farther UEs normalize above 1
                 "relative_bearing": 360,
                 "relative_tilt": 180,
                 "relative_tilt_squared": 32400,
