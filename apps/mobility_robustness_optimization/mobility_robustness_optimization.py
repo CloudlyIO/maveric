@@ -126,8 +126,8 @@ class MobilityRobustnessOptimization(ABC):
             # Ensure the directory exists
             os.makedirs(file_relative_path, exist_ok=True)
 
-            with open(filename, "wb") as fp:
-                pickle.dump(self.bayesian_digital_twins, fp)
+            # leaves gpytorch's posterior caches out of the file
+            BayesianDigitalTwin.save_model_map_to_pickle(str(filename), self.bayesian_digital_twins)
 
             logger.info(f"Twins Saved Successfully as Pickle at: {filename}")
 

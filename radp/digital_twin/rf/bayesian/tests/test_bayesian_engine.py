@@ -9,6 +9,8 @@ is trained and inferred on, using small sample data.
 """
 
 import logging
+import os
+import tempfile
 import unittest
 
 import numpy as np
@@ -456,3 +458,69 @@ class TestFantasyUpdate(unittest.TestCase):
 
         expected = self._exact_posterior_mean(pd.concat([self.train, new]))
         np.testing.assert_allclose(self._predicted_mean(), expected, atol=1e-3)
+
+    def test_update_after_save_and_reload_matches_exact_posterior(self):
+        self._predicted_mean()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = os.path.join(tmp_dir, "model_map.pickle")
+            BayesianDigitalTwin.save_model_map_to_pickle(path, {"Cell1": self.twin})
+            self.twin = BayesianDigitalTwin.load_model_map_from_pickle(path)["Cell1"]
+        new = _smooth_cell_frame(500, self.rng)
+
+        self.twin.update_trained_gpmodel([new])
+
+        expected = self._exact_posterior_mean(pd.concat([self.train, new]))
+        np.testing.assert_allclose(self._predicted_mean(), expected, atol=1e-3)
+
+
+class TestSaveModelMap(unittest.TestCase):
+    """save_model_map_to_pickle must leave gpytorch's posterior caches out of the file (tens of MB
+    per cell after a prediction or a fantasy update) without dropping them from memory."""
+
+    MAX_FILE_BYTES = 1_000_000  # ~40 KB without the caches, ~20 MB with them
+
+    def setUp(self):
+        torch.manual_seed(0)
+        self.rng = np.random.default_rng(0)
+        self.test = _smooth_cell_frame(100, self.rng)
+        self.twin = BayesianDigitalTwin([_smooth_cell_frame(2000, self.rng)], ["a", "b"], ["y"])
+        tmp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp_dir.cleanup)
+        self.path = os.path.join(tmp_dir.name, "model_map.pickle")
+
+    def _predicted_mean(self, twin):
+        means, _ = twin.predict_distributed_gpmodel([self.test.copy()])
+        return np.ravel(means)
+
+    def _save_and_reload(self):
+        BayesianDigitalTwin.save_model_map_to_pickle(self.path, {"Cell1": self.twin})
+        return BayesianDigitalTwin.load_model_map_from_pickle(self.path)["Cell1"]
+
+    def test_file_excludes_caches_after_predict(self):
+        self._predicted_mean(self.twin)
+
+        self._save_and_reload()
+
+        self.assertLess(os.path.getsize(self.path), self.MAX_FILE_BYTES)
+
+    def test_file_excludes_caches_after_update(self):
+        self.twin.update_trained_gpmodel([_smooth_cell_frame(500, self.rng)])
+
+        self._save_and_reload()
+
+        self.assertLess(os.path.getsize(self.path), self.MAX_FILE_BYTES)
+
+    def test_in_memory_caches_survive_save(self):
+        self._predicted_mean(self.twin)
+        caches = self.twin.model.prediction_strategy
+
+        self._save_and_reload()
+
+        self.assertIs(self.twin.model.prediction_strategy, caches)
+
+    def test_reloaded_twin_predicts_like_original(self):
+        expected = self._predicted_mean(self.twin)
+
+        reloaded = self._save_and_reload()
+
+        np.testing.assert_allclose(self._predicted_mean(reloaded), expected, atol=1e-4)

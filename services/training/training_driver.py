@@ -102,11 +102,6 @@ class TrainingDriver:
                 )
                 logger.info("Finished updating trained model")
 
-            # prime the model cache by calling a mock prediction on it
-            # using the first set of training data
-            # so that it is ready for further updates or operations
-            model_map[cell_id].predict_distributed_gpmodel([training_data.head(1)])
-
         # save the serialized model map object to file
         BayesianDigitalTwin.save_model_map_to_pickle(
             model_file_path=model_file_path,

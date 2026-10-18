@@ -317,8 +317,18 @@ class BayesianDigitalTwin:
         model_file_path: str,
         model_map: Dict[str, BayesianDigitalTwin],
     ) -> None:
-        """Saving mapping of models to file"""
+        """Saving mapping of models to file
+
+        After a prediction or a fantasy update, gpytorch keeps posterior caches on
+        `model.prediction_strategy` that reach tens of MB per cell. Prediction and update rebuild
+        them on demand, so they are left out of the file; the in-memory models keep theirs.
+        """
+        cached_strategies = {
+            cell_id: twin.model.prediction_strategy for cell_id, twin in model_map.items()
+        }
         try:
+            for twin in model_map.values():
+                twin.model.prediction_strategy = None
             with atomic_write(model_file_path, "wb") as pickle_file:
                 pickle.dump(model_map, pickle_file)
             logger.info(f"Successfully saved model to file: {model_file_path}")
@@ -327,6 +337,9 @@ class BayesianDigitalTwin:
                 f"Exception occurred writing digital twin model to file: {model_file_path}"
             )
             raise e
+        finally:
+            for cell_id, twin in model_map.items():
+                twin.model.prediction_strategy = cached_strategies[cell_id]
 
     @staticmethod
     def split_training_and_test_data(
