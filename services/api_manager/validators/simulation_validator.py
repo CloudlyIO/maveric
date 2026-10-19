@@ -354,7 +354,8 @@ class SimulationRequestValidator(BaseValidator):
             max_rows=100_000,
         )
         errors: List[Dict[str, str]] = []
-        errors.extend(self._range_errors(df, "cell_el_deg", 0, 15))
+        # Same tilt span the training validator accepts.
+        errors.extend(self._range_errors(df, "cell_el_deg", 0, 20))
         duplicate_cells = sorted(
             df.loc[df.duplicated(subset=["cell_id"]), "cell_id"].astype(str).unique()
         )

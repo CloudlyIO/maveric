@@ -121,6 +121,18 @@ class TestSimulationRequestValidator(unittest.TestCase):
             os.unlink(ue_path)
             os.unlink(config_path)
 
+    def test_validate_simulation_files_accepts_20_deg_tilt(self):
+        ue_path, config_path = self._write_simulation_files(
+            config_rows=[{"cell_id": "cell_1", "cell_el_deg": 20}]
+        )
+        try:
+            self.validator.validate_simulation_files(
+                {"ue_data_file_path": ue_path, "config_file_path": config_path}
+            )
+        finally:
+            os.unlink(ue_path)
+            os.unlink(config_path)
+
     def test_validate_simulation_files_rejects_bad_ue_data(self):
         ue_path, config_path = self._write_simulation_files(
             ue_overrides={"lat": [100], "tick": [-1]}

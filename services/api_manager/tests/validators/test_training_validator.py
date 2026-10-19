@@ -107,6 +107,40 @@ class TestTrainingRequestValidator(unittest.TestCase):
             os.unlink(training_path)
             os.unlink(topology_path)
 
+    def test_validate_training_files_accepts_rl_app_ranges(self):
+        # the energy-saving / load-balancing sample data reaches -162 dBm and a 20 deg tilt
+        training_path, topology_path = self._write_training_files(
+            training_overrides={"avg_rsrp": [-162.3], "cell_el_deg": [20]}
+        )
+        try:
+            self.validator.validate_training_files(
+                {
+                    "ue_training_data_file_path": training_path,
+                    "topology_file_path": topology_path,
+                }
+            )
+        finally:
+            os.unlink(training_path)
+            os.unlink(topology_path)
+
+    def test_validate_training_files_rejects_beyond_rl_app_ranges(self):
+        training_path, topology_path = self._write_training_files(
+            training_overrides={"avg_rsrp": [-171], "cell_el_deg": [21]}
+        )
+        try:
+            with self.assertRaises(FileValidationException) as ctx:
+                self.validator.validate_training_files(
+                    {
+                        "ue_training_data_file_path": training_path,
+                        "topology_file_path": topology_path,
+                    }
+                )
+            fields = {error["field"] for error in ctx.exception.validation_errors}
+            self.assertEqual(fields, {"avg_rsrp", "cell_el_deg"})
+        finally:
+            os.unlink(training_path)
+            os.unlink(topology_path)
+
     def test_validate_training_files_rejects_missing_topology_cell(self):
         training_path, topology_path = self._write_training_files(
             training_overrides={"cell_id": ["missing_cell"]}

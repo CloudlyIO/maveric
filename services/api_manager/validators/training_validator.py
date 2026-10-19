@@ -143,10 +143,12 @@ class TrainingRequestValidator(BaseValidator):
         )
 
         errors: List[Dict[str, str]] = []
-        errors.extend(self._range_errors(df, "avg_rsrp", -150, 0))
+        # Simulated RSRP runs below the 3GPP -156 dBm reporting floor, and the energy-saving and
+        # load-balancing RL agents pick tilts from 0-20 deg, so the twin must accept that span.
+        errors.extend(self._range_errors(df, "avg_rsrp", -170, 0))
         errors.extend(self._range_errors(df, "lat", -90, 90))
         errors.extend(self._range_errors(df, "lon", -180, 180))
-        errors.extend(self._range_errors(df, "cell_el_deg", 0, 15))
+        errors.extend(self._range_errors(df, "cell_el_deg", 0, 20))
 
         if errors:
             raise FileValidationException(
