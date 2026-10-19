@@ -78,6 +78,7 @@ notebooks/data/sim_data/
 notebooks/data/mro_data/
 notebooks/data/energy_saving_data/
 notebooks/data/load_balancing_data/
+notebooks/data/__MACOSX/
 
 # app data
 apps/energy_savings/data
