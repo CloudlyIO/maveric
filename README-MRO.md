@@ -6,17 +6,14 @@
 
 1. **[Overview](#1-overview)**
 2. **[Architecture & Components](#2-architecture--components)**
-3. **[What MRO Does](#3-what-mro-does)**
+3. **[What MRO Does](#3-what-mro-does-intelligent-handover-parameter-optimization)**
 4. **[Directory Structure](#4-directory-structure)**
 5. **[Prerequisites and Setup](#5-prerequisites-and-setup)**
-6. **[Quick Start Example](#6-quick-start-example)**
-7. **[Step-by-Step Usage Guide](#7-step-by-step-usage-guide)**
-8. **[Detailed Code Examples](#8-detailed-code-examples)**
-9. **[Related Notebooks](#9-related-notebooks)**
-10. **[Troubleshooting](#10-troubleshooting)**
+6. **[Related Notebooks](#6-related-notebooks)**
+7. **[Troubleshooting](#7-troubleshooting)**
 
 ---
-> **Prerequisites:** Complete the setup steps in [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) before proceeding.
+> **Prerequisites:** Complete the setup steps in [DEVELOPER-GUIDE.md](DEVELOPER-GUIDE.md) before proceeding.
 
 # **1. Overview**
 
@@ -30,7 +27,7 @@ MRO leverages **Bayesian Digital Twin (BDT)** RF models to predict received sign
 
 ## Base Class: `MobilityRobustnessOptimization`
 
-The abstract base class ([mobility_robustness_optimization.py](mobility_robustness_optimization.py)) provides core functionality:
+The abstract base class ([mobility_robustness_optimization.py](apps/mobility_robustness_optimization/mobility_robustness_optimization.py)) provides core functionality:
 
 - **RF Twin Management:**
   - `train_or_update_rf_twins()`: Train new or update existing Bayesian Digital Twins
@@ -49,7 +46,7 @@ The abstract base class ([mobility_robustness_optimization.py](mobility_robustne
 
 ## Optimization Implementations
 
-#### 1. SimpleMRO ([simple_mro.py](simple_mro.py:17))
+#### 1. SimpleMRO ([simple_mro.py](apps/mobility_robustness_optimization/simple_mro.py))
 Iterative random search optimization that:
 - Randomly samples hysteresis and TTT values within valid ranges
 - Evaluates each configuration using the MRO metric
@@ -58,7 +55,7 @@ Iterative random search optimization that:
 
 **Best for:** Quick exploration, baseline comparisons, understanding parameter sensitivity
 
-#### 2. ReinforcedMRO ([mro_rl.py](mro_rl.py:20))
+#### 2. ReinforcedMRO ([mro_rl.py](apps/mobility_robustness_optimization/mro_rl.py))
 Reinforcement learning approach using:
 - **PPO (Proximal Policy Optimization)** agent
 - Custom Gymnasium environment (`ReinforcedMROEnv`)
@@ -109,9 +106,9 @@ apps/mobility_robustness_optimization/
 ```
 
 **Related Resources:**
-- [notebooks/mro.ipynb](../../notebooks/mro.ipynb): Interactive MRO workflow demonstration
-- [notebooks/mobility_model.ipynb](../../notebooks/mobility_model.ipynb): UE mobility pattern analysis
-- [notebooks/radp_library.py](../../notebooks/radp_library.py): Shared utility functions
+- [notebooks/mro.ipynb](notebooks/mro.ipynb): Interactive MRO workflow demonstration
+- [notebooks/mobility_model.ipynb](notebooks/mobility_model.ipynb): UE mobility pattern analysis
+- [notebooks/radp_library.py](notebooks/radp_library.py): Shared utility functions
 
 ---
 
@@ -121,27 +118,30 @@ apps/mobility_robustness_optimization/
 
 # **5. Prerequisites and Setup**
 
-For complete setup instructions including Python environment, Docker services, and dependencies, see [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md).
+For complete setup instructions including Python environment, Docker services, and dependencies, see [DEVELOPER-GUIDE.md](DEVELOPER-GUIDE.md).
 
 ## Quick Setup Summary
 
 **System Requirements:**
-- Python 3.9.x to 3.10.x
+- Python 3.10.x
 - RADP Core libraries installed
 - Minimum 8GB RAM (16GB recommended)
 
 
 
-**For detailed installation steps, environment setup, and troubleshooting, refer to the [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md).**
+**For detailed installation steps, environment setup, and troubleshooting, refer to the [DEVELOPER-GUIDE.md](DEVELOPER-GUIDE.md).**
 
 ---
 
 
 # **6. Related Notebooks**
 
-### [notebooks/mro.ipynb](../../notebooks/mro.ipynb)
+### [notebooks/mro.ipynb](notebooks/mro.ipynb)
 
 **Purpose:** Interactive demonstration of the complete MRO workflow
+
+**To run it:** no Docker needed. Unzip the data (`cd notebooks/data && unzip mro_data.zip`), start Jupyter from
+`notebooks/`, and run top to bottom (~10 min on a laptop CPU).
 
 **Contents:**
 - Data loading and preprocessing
@@ -162,7 +162,7 @@ For complete setup instructions including Python environment, Docker services, a
 
 ---
 
-### [notebooks/mobility_model.ipynb](../../notebooks/mobility_model.ipynb)
+### [notebooks/mobility_model.ipynb](notebooks/mobility_model.ipynb)
 
 **Purpose:** Explore and understand UE mobility patterns
 
@@ -181,7 +181,7 @@ For complete setup instructions including Python environment, Docker services, a
 
 ---
 
-### [notebooks/radp_library.py](../../notebooks/radp_library.py)
+### [notebooks/radp_library.py](notebooks/radp_library.py)
 
 **Purpose:** Shared utility functions used across notebooks and applications
 
@@ -367,9 +367,9 @@ If issues persist:
 
 1. **Check logs:** Review detailed error messages
 2. **Verify data:** Ensure input data formats are correct
-3. **Test notebooks:** Run [mro.ipynb](../../notebooks/mro.ipynb) with sample data
+3. **Test notebooks:** Run [mro.ipynb](notebooks/mro.ipynb) with sample data
 4. **Review tests:** Check test cases for examples
-5. **Consult DEVELOPER_GUIDE.md:** For general setup issues
+5. **Consult DEVELOPER-GUIDE.md:** For general setup issues
 
 ---
 

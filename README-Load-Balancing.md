@@ -4,13 +4,14 @@
 
 ## Table of Contents
 
-1. **[Overview](#overview)**
-2. **[What Load Balancing Does](#what-load-balancing-does-intelligent-network-load-distribution)**
-3. **[Architecture & Components](#architecture--components)**
-4. **[Directory Structure](#directory-structure)**
-5. **[Prerequisites and Setup](#prerequisites-and-setup)**
-6. **[Quick Start Example](#quick-start-example)**
-7. **[Step-by-Step Usage Guide](#step-by-step-usage-guide)**
+1. **[Overview](#1-overview)**
+2. **[What Load Balancing Does](#2-what-load-balancing-does-intelligent-network-load-distribution)**
+3. **[Architecture & Components](#3-architecture--components)**
+4. **[Directory Structure](#4-directory-structure)**
+5. **[Prerequisites and Setup](#5-prerequisites-and-setup)**
+6. **[Quick Start Example](#6-quick-start-example)**
+7. **[Step-by-Step Usage Guide](#7-step-by-step-usage-guide)**
+8. **[Running the Notebook](#8-running-the-notebook)**
 
 
 
@@ -113,18 +114,18 @@ apps/load_balancing/
 
 # **5. Prerequisites and Setup**
 
-For complete setup instructions including Python environment, Docker services, and dependencies, see [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md).
+For complete setup instructions including Python environment, Docker services, and dependencies, see [DEVELOPER-GUIDE.md](DEVELOPER-GUIDE.md).
 
 ## Quick Setup Summary
 
 **System Requirements:**
-- Python 3.9.x to 3.10.x
+- Python 3.10.x
 - RADP Core libraries installed
 - Minimum 8GB RAM (16GB recommended)
 
 
 
-**For detailed installation steps, environment setup, and troubleshooting, refer to the [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md).**
+**For detailed installation steps, environment setup, and troubleshooting, refer to the [DEVELOPER-GUIDE.md](DEVELOPER-GUIDE.md).**
 
 ---
 
@@ -294,6 +295,27 @@ python main_app.py --visualize --test-day <D> --tick <T>
 - **Inputs:** `cco_rl_agent_multiday.zip`, `bdt_model_map.pickle`, `data/topology.csv`, `data/config.csv`, `generated_data/Day_<D>/ue_data_gym_ready/`
 - **Output:** `.png` image in `plots/` directory
 
+
+# **8. Running the Notebook**
+
+[`notebooks/load_balancing.ipynb`](notebooks/load_balancing.ipynb) runs the same pipeline interactively. It differs from the CLI above:
+
+| | CLI (`main_app.py`) | Notebook |
+|---|---|---|
+| Data location | `apps/load_balancing/data/`, `apps/load_balancing/generated_data/` | `notebooks/data/load_balancing_data/` (unzipped in place, no copying) |
+| Train / test days | whatever you pass (example above: 0–2 / 3) | 0–3 / 4 |
+| Training container | `--container` flag | picked from `RADP_SERVICE_PORT` in `.env` (8081 → `radp_dev-training-1`, 8080 → `radp_prod-training-1`) |
+
+**Prerequisites**
+
+1. The RADP stack running: `docker compose -f dc.yml -f dc-dev.yml up -d --build` (or the prod stack).
+2. A repo-root `.env` matching it: `cp .env-dev .env` (API on 8081) or `cp .env-prod .env` (API on 8080).
+3. The sample data: `cd notebooks/data && unzip load_balancing_data.zip`, then start Jupyter from `notebooks/`.
+
+**Runtime:** RL training runs at roughly 2 steps/s on a laptop CPU, so the default `TOTAL_TIMESTEPS = 30000` takes
+about 4 h. Set it to `2048` for a first run (one PPO rollout, about 15 min).
+
+**Re-running:** the BDT cell reuses the model already trained under the same `BDT_MODEL_ID`. Change the id to retrain.
 
 ---
 

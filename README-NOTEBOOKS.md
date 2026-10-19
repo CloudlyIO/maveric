@@ -2,45 +2,54 @@
 
 ## Configure Notebook environment
 
-Install the Notebook dependencies:
+Use Python 3.10. The [DEVELOPER-GUIDE.md Quick Start](DEVELOPER-GUIDE.md#quick-start) installs everything,
+including Jupyter. If you only want the notebooks:
 
-    ```console
-    python3 -m venv .venv
-    source .venv/bin/activate
-    pip3 install --upgrade pip
-    pip3 install -r notebooks/requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
-    ```
+```console
+python3.10 -m venv .venv
+source .venv/bin/activate
+pip3 install --upgrade pip
+pip3 install -r notebooks/requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+export PYTHONPATH="$(pwd)":$PYTHONPATH
+```
 
-Optional: Enable Jupyter Notebook extensions:
+This installs Jupyter Notebook 7, which has no classic nbextensions, so the old codefolding step is gone.
 
-Code folding: `jupyter nbextension enable codefolding/main`
-
-You can find more details about other extensions here:
- <https://jupyter-contrib-nbextensions.readthedocs.io/>
-
-Install ffmpeg:
-
-You can download it from here <https://ffmpeg.org/download.html>
-
-Provide the file path to ffmpeg binary in .env file.
-
-Create .env file in root folder of repo and add below to env
+Optional: install ffmpeg (<https://ffmpeg.org/download.html>) for the animations in some notebooks, and point
+`FFMPEG_PATH` in the repo-root `.env` at the binary:
 
 > FFMPEG_PATH="/path_to_ffmpeg/ffmpeg"
 
-## Sample data set
+## Prerequisites per notebook
 
-Unpack the sample data set present at `notebooks/data/sim_data.zip` under `notebooks/data/`
+Some notebooks need nothing else; `energy_savings.ipynb` and `load_balancing.ipynb` need the RADP Docker stack
+running and a matching `.env`. See
+[DEVELOPER-GUIDE.md → Notebook Prerequisites](DEVELOPER-GUIDE.md#notebook-prerequisites) for the per-notebook
+table (Docker, sample data, extra setup, expected runtime).
+
+## Sample data sets
+
+Unpack the sample data under `notebooks/data/`:
+
+```console
+cd notebooks/data
+unzip sim_data.zip              # coo_with_radp_digital_twin.ipynb
+unzip mro_data.zip              # mro.ipynb
+unzip energy_saving_data.zip    # energy_savings.ipynb
+unzip load_balancing_data.zip   # load_balancing.ipynb
+```
 
 ## Start Jupyter
 
-Run Jupyter notebook:
+From the `notebooks/` directory (paths inside the notebooks are relative to it):
 
-    ```console
-    jupyter notebook
-    ```
+```console
+cd notebooks
+jupyter notebook
+```
 
-This will open Jupyter notebooks in browser. Under Files tab in Jupyter notebooks navigate to `notebooks/coo_demo_with_radp_digital_twin.ipynb` and run the test.
+This opens Jupyter in the browser. Open the notebook you want, for example `coo_with_radp_digital_twin.ipynb`, and
+run it top to bottom.
 
 ## LICENSE
 

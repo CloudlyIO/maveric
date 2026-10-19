@@ -26,13 +26,17 @@ The application is organized into several Python modules, each with a specific r
 
 Before running the pipeline, ensure the following setup is complete:
 
-1. **Python Environment:** Install all required packages.
+1. **Python Environment:** Python 3.10, with the pinned packages installed from the repo root (the
+   [DEVELOPER-GUIDE.md Quick Start](../../DEVELOPER-GUIDE.md#quick-start) does this):
 
    ```bash
-   pip install -r requirements.txt
+   pip3 install -r radp/client/requirements.txt
+   pip3 install -r radp/digital_twin/requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+   pip3 install -r notebooks/requirements.txt
    ```
 
-   _(Note: This requires a `requirements.txt` file listing packages like `pandas`, `numpy`, `matplotlib`, `shapely`, `gymnasium`, `stable-baselines3`, etc.)_
+   Don't install `stable-baselines3[extra]` unpinned on top: its `opencv-python` 5.x dependency upgrades numpy to
+   2.x, which breaks the pinned pandas and scipy.
 
 2. **RADP Backend Services:** The RADP backend, including the `training` service, must be running via Docker Compose.
 

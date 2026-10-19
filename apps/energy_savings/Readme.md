@@ -85,7 +85,7 @@ energy_saving_app/
 
 ## 5. Prerequisites
 
-- **Python 3.8+**
+- **Python 3.10** (see [DEVELOPER-GUIDE.md](../../DEVELOPER-GUIDE.md#system-requirements))
 - **Docker:** BDT model training runs inside a Docker container. Ensure Docker daemon is running.
 - **Environment Configuration:** Create a `.env` file in the project root to configure the RADP service connection. When running in development mode, set:
 
@@ -102,24 +102,17 @@ energy_saving_app/
 
   **Note:** The dev mode services run on port `8081`, while production uses `8080`. Ensure `RADP_SERVICE_PORT=8081` is set when using `dc-dev.yml`.
 
-- **Required Python Packages:** Create a `requirements.txt` file:
+- **Required Python Packages:** install the pinned set from the repo root (the
+  [DEVELOPER-GUIDE.md Quick Start](../../DEVELOPER-GUIDE.md#quick-start) does this):
 
-        ```text
-        pandas
-        numpy
-        gymnasium
-        stable-baselines3[extra]
-        matplotlib
-        torch
-        gpytorch
-        # any other specific libraries like radp_client
-        ```
+  ```bash
+  pip3 install -r radp/client/requirements.txt
+  pip3 install -r radp/digital_twin/requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+  pip3 install -r notebooks/requirements.txt
+  ```
 
-        Install packages:
-
-        ```bash
-        pip install -r requirements.txt
-        ```
+  Don't install `stable-baselines3[extra]` unpinned on top: its `opencv-python` 5.x dependency upgrades numpy to
+  2.x, which breaks the pinned pandas and scipy.
 
 ---
 

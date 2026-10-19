@@ -29,11 +29,14 @@
 
 | Requirement | Specification |
 |-------------|---------------|
-| **Python** | 3.9.x to 3.10.x |
+| **Python** | 3.10.x (3.9 fails: `matplotlib==3.10.7` and the pinned agentic stack need ≥3.10; 3.11+ is untested) |
 | **Docker** | Latest version with Docker Compose |
 | **OS** | Linux, macOS, or Windows with WSL2 |
 | **Memory** | 8GB RAM minimum (16GB recommended) |
 | **Storage** | 10GB+ free space |
+
+If `python3.10 --version` fails, install 3.10 first, e.g. `pyenv install 3.10 && pyenv local 3.10`,
+`uv python install 3.10`, `brew install python@3.10`, or the python.org installer.
 
 ## Optional Requirements
 
@@ -70,14 +73,14 @@ For developers who want to get up and running quickly:
 git clone https://github.com/lf-connectivity/maveric.git
 cd maveric
 
-# 2. Set up Python environment
-# Ubuntu/Debian:
-python -m venv .venv
-source .venv/bin/activate  
+# 2. Set up Python environment (Python 3.10 — see System Requirements)
+# macOS/Linux:
+python3.10 -m venv .venv
+source .venv/bin/activate
 pip3 install --upgrade pip
 
-# Windows: 
-py -m venv .venv 
+# Windows:
+py -3.10 -m venv .venv
 .venv\Scripts\activate
 pip3 install --upgrade pip
 
@@ -106,7 +109,7 @@ pip3 install -r requirements-agentic.txt # pinned agentic stack (Agentic MRO + A
 IMPORTANT: Make sure to uninstall CPU based PyTorch if already installed  
 Visit https://pytorch.org/get-started/locally/ for download instuctions 
 
-# 6. Start RADP services
+# 6. Start RADP services (first build takes ~8 min)
 # For CPU support
 docker build -t radp radp
 docker compose -f dc.yml -f dc-prod.yml up -d --build
@@ -115,9 +118,16 @@ docker compose -f dc.yml -f dc-prod.yml up -d --build
 docker build -f radp/Dockerfile-cuda -t radp radp
 docker compose -f dc.yml -f dc-prod.yml -f dc-cuda.yml up -d --build
 
-# 7. Verify setup
-docker ps
+# 7. Point the Python client at the stack you started
+cp .env-prod .env   # prod stack, API on 8080 (Windows: copy .env-prod .env)
+# or, if you started the dev stack (dc-dev.yml): cp .env-dev .env   (API on 8081)
+
+# 8. Verify setup
+docker compose -f dc.yml -f dc-prod.yml ps   # all services Up, kafka (healthy)
 ```
+
+> **Which notebooks need what?** See [Notebook Prerequisites](#notebook-prerequisites). In short: `mro.ipynb`
+> needs no Docker; `energy_savings.ipynb` and `load_balancing.ipynb` need a running stack and a matching `.env`.
 
 ---
 
@@ -154,9 +164,9 @@ Someone looking for a detailed walkthrough of the set up instead of the quick ru
 ## 1. Python Virtual Environment
 
 ```bash
-# Create virtual environment
-python3 -m venv .venv # macOS/Linux
-py -m venv .venv # Windows
+# Create virtual environment (Python 3.10)
+python3.10 -m venv .venv # macOS/Linux
+py -3.10 -m venv .venv # Windows
 
 # Activate virtual environment
 source .venv/bin/activate # macOS/Linux
@@ -357,8 +367,8 @@ pip3 install -r services/ue_tracks_generation/requirements.txt
 
 | Service | Purpose | Port | Dependencies |
 |---------|---------|------|--------------|
-| `api_manager` | REST API gateway | 8080/8081 | FastAPI, Kafka |
-| `orchestration` | Job orchestration | - | Kafka, Redis |
+| `api_manager` | REST API gateway | 8080 (prod) / 8081 (dev) | Flask, Kafka |
+| `orchestration` | Job orchestration | - | Kafka |
 | `training` | ML model training | - | PyTorch, GPyTorch |
 | `rf_prediction` | RF simulation | - | NumPy, SciPy |
 | `ue_tracks_generation` | UE mobility simulation | - | NumPy, Pandas |
@@ -407,16 +417,12 @@ For detailed MRO (Mobility Robustness Optimization) usage, see [README-MRO.md](R
 
 ### MRO-Specific Dependencies
 
-```bash
-# MRO-specific dependencies
-pip3 install scikit-learn matplotlib seaborn
+None beyond the Quick Start: `notebooks/requirements.txt` already pins scikit-learn, matplotlib,
+stable-baselines3 2.0.0 (with gymnasium) and xgboost.
 
-# Optional: For RL-based optimization
-pip3 install gymnasium stable-baselines3[extra]
-
-# Optional: For XGBoost-based Bayesian optimization
-pip3 install xgboost
-```
+> **Do not** `pip install gymnasium stable-baselines3[extra]` unpinned on top: the `[extra]` set pulls
+> `opencv-python` 5.x, which upgrades numpy to 2.x, after which pandas 1.5.3 and scipy 1.10.1 fail to import
+> (`ValueError: numpy.dtype size changed`). The same applies to every application below.
 
 ### Agentic MRO-Specific Dependencies
 
@@ -432,29 +438,24 @@ See [Agentic Stack Setup](#agentic-stack-setup) for the full package list, optio
 
 ## Energy Savings Application Setup
 
+For detailed usage, see [README-Energy-Savings.md](README-Energy-Savings.md).
+
 ### Energy Savings-Specific Dependencies
 
-```bash
-# Energy Savings App dependencies (RL-based)
-pip3 install gymnasium stable-baselines3[extra] torch
-
-# Additional visualization dependencies
-pip3 install matplotlib seaborn plotly
-```
+None beyond the Quick Start (`notebooks/requirements.txt` pins torch, stable-baselines3, gymnasium, matplotlib
+and plotly). Running it does need the RADP Docker stack — see [Notebook Prerequisites](#notebook-prerequisites).
 
 ---
 
 ## Load Balancing Application Setup
 
+For detailed usage, see [README-Load-Balancing.md](README-Load-Balancing.md).
+
 ### Load Balancing-Specific Dependencies
 
-```bash
-# Load Balancing App dependencies
-pip3 install gymnasium stable-baselines3[extra] matplotlib
-
-# Additional optimization libraries
-pip3 install scipy networkx
-```
+None beyond the Quick Start (`notebooks/requirements.txt` and `radp/digital_twin/requirements.txt` pin
+stable-baselines3, gymnasium, matplotlib and scipy). Running it does need the RADP Docker stack — see
+[Notebook Prerequisites](#notebook-prerequisites).
 
 ---
 
@@ -462,13 +463,7 @@ pip3 install scipy networkx
 
 ### CCO-Specific Dependencies
 
-```bash
-# CCO App dependencies (RL-based optimization)
-pip3 install gymnasium stable-baselines3[extra] torch
-
-# Antenna pattern and RF modeling
-pip3 install scipy matplotlib
-```
+None beyond the Quick Start (torch, stable-baselines3, gymnasium, scipy and matplotlib are already pinned).
 
 
 ---
@@ -479,30 +474,37 @@ Jupyter notebooks provide interactive examples and data analysis capabilities.
 
 ### Installation
 
+The Quick Start installs everything the notebooks need, including Jupyter (Notebook 7 and JupyterLab 4).
+If you skipped it, at minimum run:
+
 ```bash
 # Install notebook dependencies
 pip3 install -r notebooks/requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
 
-# Intall PyTorch with GPU
-https://pytorch.org/get-started/locally/
-
-# Install Jupyter Notebook and JupyterLab if needed
-pip3 install --upgrade notebook jupyter-server jupyterlab
-
-# Optional: Enable Jupyter extensions
-jupyter nbextension enable codefolding/main
+# Optional: PyTorch with GPU
+# https://pytorch.org/get-started/locally/
 ```
 
-## Key Notebooks
+> Notebook 7 has no classic nbextensions, so the old `jupyter nbextension enable codefolding/main` step is gone.
 
-| Notebook | Purpose | Requirements |
-|----------|---------|--------------|
-| `coo_with_radp_digital_twin.ipynb` | Coverage optimization demo | Sample data |
-| `energy_savings.ipynb` | Energy efficiency analysis | Trained models |
-| `load_balancing.ipynb` | Load balancing examples | Trained models |
-| `mobility_model.ipynb` | Mobility pattern analysis | Sample data |
-| `mro.ipynb` | Mobility robustness optimization | Sample data |
-| `traffic_demand_demonstration.ipynb` | Traffic simulation | Generated data |
+## Notebook Prerequisites
+
+Run notebooks from the `notebooks/` directory (paths inside them are relative to it), with the Quick Start venv
+as the kernel.
+
+| Notebook | Docker stack? | Sample data (`notebooks/data/`) | Extra setup | Runtime (laptop CPU) |
+|----------|---------------|---------------------------------|-------------|----------------------|
+| `mro.ipynb` | No | `mro_data.zip` | — | ~10 min |
+| `energy_savings.ipynb` | **Yes** — dev or prod | `energy_saving_data.zip` | Repo-root `.env` matching the stack (`cp .env-dev .env` or `cp .env-prod .env`) | ~3 h at the default `TOTAL_TIMESTEPS = 25000` (~2 RL steps/s); ~15 min with `2048` |
+| `load_balancing.ipynb` | **Yes** — dev or prod | `load_balancing_data.zip` | Same as energy savings | ~4 h at the default `30000`; ~15 min with `2048` |
+| `coo_with_radp_digital_twin.ipynb` | No | `sim_data.zip` | — | not measured |
+| `mobility_model.ipynb` | No | None (generates UE tracks) | — | not measured |
+| `traffic_demand_demonstration.ipynb` | No | None (generates traffic) | — | not measured |
+
+The energy-savings and load-balancing notebooks train their Bayesian Digital Twin through the RADP API, then copy
+the model out of the training container. They read `RADP_SERVICE_PORT` from `.env` and pick the matching container
+(`radp_dev-training-1` for 8081, `radp_prod-training-1` for 8080). Re-running them reuses the model already
+trained under the same `BDT_MODEL_ID`.
 
 ### Sample Data Setup
 
@@ -637,12 +639,12 @@ python3 -m pre_commit run --all-files
 # Start services in development mode
 docker compose -f dc.yml -f dc-dev.yml up -d --build
 
-# Monitor individual services
-docker logs -f radp_dev-api-manager-1
+# Monitor individual services (container names use the compose service names, with underscores)
+docker logs -f radp_dev-api_manager-1
 docker logs -f radp_dev-training-1
 docker logs -f radp_dev-orchestration-1
-docker logs -f radp_dev-rf-prediction-1
-docker logs -f radp_dev-ue-tracks-generation-1
+docker logs -f radp_dev-rf_prediction-1
+docker logs -f radp_dev-ue_tracks_generation-1
 
 # Monitor all services simultaneously
 docker compose -f dc.yml -f dc-dev.yml logs -f
@@ -651,18 +653,16 @@ docker compose -f dc.yml -f dc-dev.yml logs -f
 docker compose -f dc.yml -f dc-dev.yml ps
 docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 
-# Test API connectivity
-curl http://localhost:8081/health
-curl http://localhost:8081/docs  # API documentation
+# Test API connectivity (the API has no /health route; an unknown model id returning
+# a JSON 404 "model ... not found" means the API is up)
+curl -i http://localhost:8081/model/connectivity-check
+# API reference: services/api_manager/openapi.yaml
 
 # Monitor resource usage
 docker stats
 
-# Check Kafka topics (if needed)
+# Check Kafka topics (if needed; expect "jobs" and "outputs")
 docker exec -it radp_dev-kafka-1 kafka-topics --bootstrap-server localhost:9092 --list
-
-# Monitor Redis (if needed)
-docker exec -it radp_dev-redis-1 redis-cli ping
 ```
 
 ## 4. Commit and Push
@@ -713,8 +713,11 @@ sudo usermod -aG docker $USER
 lsof -i :8081  # macOS/Linux
 netstat -ano | findstr :8081  # Windows
 
-# Stop conflicting services or change ports in .env
+# Stop the conflicting service, or change the host port in dc-dev.yml / dc-prod.yml
+# (prod: 8080, 9094; dev: 8081, 9095, 5678-5682). If you change the API port,
+# set RADP_SERVICE_PORT in .env to match — .env only tells the Python client where to connect.
 ```
+Other local stacks are a common cause: Docker Desktop restarts containers that have a restart policy when it launches, so a stack you ran last week may already hold 8080/8081.
 
 #### 4. CUDA/PyTorch Issues
 **Error**: CUDA-related errors
@@ -779,12 +782,35 @@ pip3 install -r requirements-agentic.txt --force-reinstall
 **Error**: `end_to_end_example.py` does not accept `--preset`
 **Solution**: You're on an older copy of `end_to_end_example.py`. Pull the latest `dev` branch.
 
+#### 13. `No matching distribution found for matplotlib==3.10.7`
+**Error**: The first `pip3 install -r requirements-dev.txt` fails
+**Solution**: Your venv is Python 3.9. Recreate it with Python 3.10 (`python3.10 -m venv .venv`).
+
+#### 14. `ValueError: numpy.dtype size changed, may indicate binary incompatibility`
+**Error**: `import pandas` or `import scipy` fails after installing extra packages
+**Solution**: Something upgraded numpy to 2.x (typically an unpinned `pip install stable-baselines3[extra]`, which pulls `opencv-python` 5.x). Restore the pins:
+```bash
+pip3 install -r notebooks/requirements.txt   # re-pins numpy 1.24.x
+```
+
+#### 15. Energy Savings / Load Balancing Notebook: `Connection refused` on port 8080 or 8081
+**Error**: `HTTPConnectionPool(host='127.0.0.1', port=8080): Max retries exceeded ... Connection refused`
+**Solution**: The notebook connects to `RADP_SERVICE_PORT` from the repo-root `.env`, defaulting to the dev port 8081. Make `.env` match the stack you started (`cp .env-dev .env` for `dc-dev.yml`, `cp .env-prod .env` for `dc-prod.yml`), check `docker compose ... ps`, then restart the kernel.
+
+#### 16. Energy Savings / Load Balancing Notebook: `'docker cp' from 'radp_..._training-1' failed: No such container`
+**Error**: The BDT cell raises after training finished
+**Solution**: The container is derived from `RADP_SERVICE_PORT` (8081 → `radp_dev-training-1`, 8080 → `radp_prod-training-1`). Make `.env` match the stack you started; `docker ps` shows the real names.
+
+#### 17. `RADP rejected the training request ... validation_errors`
+**Error**: The BDT cell raises with a 400 from `/train`
+**Solution**: Training data must have `avg_rsrp` in −170…0 dBm and `cell_el_deg` in 0…20°. The `validation_errors` list in the message names each offending column and how many rows fail.
+
 
 ## Getting Help
 
 1. **Check logs**: `docker logs <container-name>`
-2. **Verify services**: `docker ps`
-3. **Test connectivity**: `curl http://localhost:8081/health`
+2. **Verify services**: `docker compose -f dc.yml -f dc-dev.yml ps` (or `dc-prod.yml`)
+3. **Test connectivity**: `curl -i http://localhost:8081/model/connectivity-check` — a JSON 404 means the API is up
 4. **Review documentation**: Check specific README files in each module
 
 ## Useful Commands
@@ -795,7 +821,7 @@ docker system prune -a
 
 # Reset virtual environment
 rm -rf .venv
-python3 -m venv .venv
+python3.10 -m venv .venv
 source .venv/bin/activate
 
 # Check service status

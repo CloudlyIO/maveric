@@ -58,7 +58,7 @@ Once Docker is installed make sure to start the docker daemon.
 
 ### Booting up RADP
 
-Once Docker is running you just need to cd to the "radp" directory (if you're not already there) and run the following command
+Once Docker is running, run the following command from the repo root (the `radp` directory is the build context)
 
 ```console
 docker build -t radp radp
@@ -98,25 +98,22 @@ This will do the following:
 
 The first time you run this command it may take a while since Docker will need to download container images. You'll see a lot of text appear on your terminal.
 
-Once you can see the RADP API service expose a web address you'll know you're ready to call the system's APIs:
+When the command returns, check that every service is `Up` and kafka is `(healthy)`:
 
-```text
-radp-init               | Successfully created the following topics:
-radp-init               | jobs
-radp-init               | outputs
-radp-init exited with code 0
+```console
+docker compose -f dc.yml -f dc-prod.yml ps
 ```
+
+The kafka container creates the `jobs` and `outputs` topics on start-up (`docker logs radp_prod-kafka-1 | grep "Creating topic"`). The API has no health route; `curl -i http://localhost:8080/model/connectivity-check` returning a JSON 404 means it is up.
 
 ### Installing Python client dependencies
 
-RADP currently requires Python >= 3.8.x and < 3.11.x
-
-The last remaining holdout to support Python 3.11 appears to be the Torch library, which should be resolved [soon](https://github.com/pytorch/pytorch/issues/86566).
+RADP requires Python 3.10.x. Python 3.9 fails on the pinned dev and agentic requirements (they need ≥3.10), and 3.11+ is untested.
 
 CD to the top level of the repo. Run the following command to install Python client dependencies:
 
 ```console
-python3 -m venv .venv
+python3.10 -m venv .venv
 source .venv/bin/activate
 pip3 install --upgrade pip
 pip3 install -r radp/client/requirements.txt
@@ -130,10 +127,10 @@ Install example requirements:
 pip3 install -r apps/requirements.txt
 ```
 
-You can copy the sample Environment files and make changes to them if desired:
+Copy the sample environment file that matches the stack you started (`.env-prod` for `dc-prod.yml`, API on 8080; `.env-dev` for `dc-dev.yml`, API on 8081) and change it if desired:
 
 ```console
-copy .env-prod .env
+cp .env-prod .env      # Windows: copy .env-prod .env
 ```
 
 This package comes with an example script which you can call to see the RADP service in action:
@@ -517,7 +514,7 @@ For all of these API's you should be able to see relevant output in your termina
 
 ## Running Notebooks
 
-Please follow [this guide](README-NOTEBOOKS.md) for running notebooks.
+Please follow [this guide](README-NOTEBOOKS.md) for running notebooks. Which notebooks need Docker, which data, and how long they take is in [DEVELOPER-GUIDE.md → Notebook Prerequisites](DEVELOPER-GUIDE.md#notebook-prerequisites).
 
 ## LICENSE
 
