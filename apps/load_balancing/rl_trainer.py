@@ -100,7 +100,7 @@ def run_rl_training(
 
     except Exception as e:
         logger.exception(f"Failed during data loading for RL training: {e}")
-        return
+        raise
 
     # The environment is instantiated.
     try:
@@ -120,7 +120,7 @@ def run_rl_training(
         logger.info("Environment created successfully.")
     except Exception as e:
         logger.exception(f"Failed to create RL environment: {e}")
-        return
+        raise
 
     # The agent is defined and trained.
     model = PPO("MlpPolicy", env, verbose=1, tensorboard_log=log_dir)
@@ -133,5 +133,6 @@ def run_rl_training(
         logger.info(f"Training complete. Model saved to {rl_model_path}")
     except Exception as e:
         logger.exception(f"An error occurred during RL agent training: {e}")
+        raise
     finally:
         env.close()

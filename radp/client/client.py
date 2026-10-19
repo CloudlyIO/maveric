@@ -19,9 +19,6 @@ logger = logging.getLogger(__name__)
 
 RETRY_EXCEPTIONS = requests.exceptions.ConnectionError
 
-RADP_SERVICE_IP = os.environ.get("RADP_SERVICE_IP", "127.0.0.1")
-RADP_SERVICE_PORT = int(os.environ.get("RADP_SERVICE_PORT", "8080"))
-
 
 def df_to_csv_file(df: pd.DataFrame, csv_file_name: str):
     """Helper method to save a pandas dataframe to csv file"""
@@ -42,7 +39,13 @@ def df_to_csv_file(df: pd.DataFrame, csv_file_name: str):
 class RADPClient(RequestsClient):
     """Simple RADP client"""
 
-    def __init__(self, ip=RADP_SERVICE_IP, port=RADP_SERVICE_PORT):
+    def __init__(self, ip=None, port=None):
+        # read the environment here rather than at import time, so a .env loaded after
+        # this module was imported (e.g. in a notebook) is still honoured
+        if ip is None:
+            ip = os.environ.get("RADP_SERVICE_IP", "127.0.0.1")
+        if port is None:
+            port = int(os.environ.get("RADP_SERVICE_PORT", "8080"))
         super().__init__(ip, port)
 
     # TODO: add error handling logic for when something goes wrong

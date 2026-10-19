@@ -72,3 +72,4 @@ def run_rl_prediction(model_load_path: str, topology_path: str, target_tick: int
 
     except Exception as e:
         logger.exception(f"An error occurred during prediction: {e}")
+        raise

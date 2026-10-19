@@ -102,7 +102,7 @@ def run_rl_training(
 
     except Exception as e:
         logger.exception(f"Failed during data loading: {e}")
-        return
+        raise
 
     try:
         reward_weights = {"cco_score": 0.2, "load_balance_score": 0.1, "energy_saving_score": 1.0}
@@ -120,7 +120,7 @@ def run_rl_training(
         env = Monitor(env, log_dir)
     except Exception as e:
         logger.exception(f"Failed to create RL environment: {e}")
-        return
+        raise
 
     # Define policy network architecture for more capacity
     policy_kwargs = dict(net_arch=dict(pi=[128, 128], vf=[128, 128]))
@@ -146,5 +146,6 @@ def run_rl_training(
         logger.info(f"Training complete. Model saved to {rl_model_path}")
     except Exception as e:
         logger.exception(f"Error during RL training: {e}")
+        raise
     finally:
         env.close()
